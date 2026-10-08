@@ -1,0 +1,15 @@
+{
+  "name": "Townley Photography",
+  "domain": "townleyphotography.com",
+  "aliases": ["Townley Creative"],
+  "businessType": "portrait photographer",
+  "services": ["headshots", "real estate photography", "event videography"],
+  "locations": ["Seattle", "Tacoma"],
+  "competitors": [
+    { "name": "Example Competitor A", "domain": "competitor-a.example" },
+    { "name": "Example Competitor B", "domain": "competitor-b.example" }
+  ],
+  "facts": {
+    "headshot sessions start at": "$250"
+  }
+}
