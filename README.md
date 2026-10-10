@@ -4,7 +4,7 @@
 in classic search (SEO) and in AI answers (GEO, generative engine optimization), and turns
 everything it finds into a ranked, plain-English fix list. Working name in the UI: *Rankwell*.
 
-- **Live:** https://web-production-84da0.up.railway.app (Railway project `seobuilder`, deployed from `claude/lucid-brown-l2jymy`)
+- **Live:** https://web-production-84da0.up.railway.app (Railway project `seobuilder`; every push to `main` deploys)
 - **Product spec:** [docs/PRD.md](docs/PRD.md) (snapshot of the planning doc)
 - **How it's built:** [docs/architecture.md](docs/architecture.md)
 - **What's done and what's next:** [docs/mvp-plan.md](docs/mvp-plan.md)
