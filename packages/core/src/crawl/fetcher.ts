@@ -1,5 +1,7 @@
+import { lookup as dnsLookup } from "node:dns";
 import { lookup } from "node:dns/promises";
-import { isIP } from "node:net";
+import { isIP, type LookupFunction } from "node:net";
+import { Agent, EnvHttpProxyAgent, fetch, type Dispatcher } from "undici";
 
 export const USER_AGENT = "SEOBuilderBot/0.1 (+https://github.com/spencertownley-sys/SEOBuilder)";
 
@@ -37,7 +39,18 @@ export function isPrivateAddress(ip: string): boolean {
     );
   }
   const v6 = ip.toLowerCase();
-  if (v6.startsWith("::ffff:")) return isPrivateAddress(v6.slice(7));
+  if (v6.startsWith("::ffff:")) {
+    const rest = v6.slice(7);
+    if (isIP(rest) === 4) return isPrivateAddress(rest);
+    // Hex form, e.g. ::ffff:7f00:1 is 127.0.0.1.
+    const m = /^([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(rest);
+    if (m) {
+      const hi = parseInt(m[1]!, 16);
+      const lo = parseInt(m[2]!, 16);
+      return isPrivateAddress(`${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`);
+    }
+    return true;
+  }
   return v6 === "::" || v6 === "::1" || v6.startsWith("fc") || v6.startsWith("fd") || v6.startsWith("fe80");
 }
 
@@ -53,6 +66,36 @@ export async function assertPublicHost(url: URL): Promise<void> {
   }
 }
 
+/**
+ * DNS lookup that refuses private addresses at connection time. Because the socket connects to
+ * the address this function returns, a hostname can't pass the check with a public IP and then
+ * connect to a private one (DNS rebinding).
+ */
+export const guardedLookup: LookupFunction = (hostname, options, callback) => {
+  dnsLookup(hostname, { ...options, all: true }, (err, addresses) => {
+    if (err) return callback(err, "", 0);
+    const list = addresses as unknown as { address: string; family: number }[];
+    const bad = list.find((a) => isPrivateAddress(a.address));
+    if (bad || !list.length) return callback(new Error(`Refusing to connect to private address ${bad?.address ?? hostname}`), "", 0);
+    if ((options as { all?: boolean }).all) return (callback as unknown as (e: null, a: typeof list) => void)(null, list);
+    callback(null, list[0]!.address, list[0]!.family);
+  });
+};
+
+let pinned: Dispatcher | undefined;
+let open: Dispatcher | undefined;
+
+/**
+ * Where an egress proxy is configured (local sandboxes), connections go through it and the proxy
+ * resolves names, so only the pre-flight check applies. In production there is no proxy and every
+ * connection goes through the pinned lookup.
+ */
+function dispatcherFor(blockPrivate: boolean): Dispatcher {
+  if (process.env.HTTPS_PROXY || process.env.https_proxy) return (open ??= new EnvHttpProxyAgent());
+  if (!blockPrivate) return (open ??= new Agent());
+  return (pinned ??= new Agent({ connect: { lookup: guardedLookup } }));
+}
+
 /** Fetch with manual redirects (so every hop is checked), a timeout and a size cap. */
 export async function politeFetch(url: string, opts: FetchOptions = {}): Promise<FetchResult> {
   const { timeoutMs = 15000, maxBytes = 3_000_000, maxRedirects = 5, blockPrivateNetworks = true, method = "GET" } = opts;
@@ -63,6 +106,7 @@ export async function politeFetch(url: string, opts: FetchOptions = {}): Promise
       const u = new URL(current);
       if (blockPrivateNetworks) await assertPublicHost(u);
       const res = await fetch(u, {
+        dispatcher: dispatcherFor(blockPrivateNetworks),
         method,
         redirect: "manual",
         headers: { "user-agent": USER_AGENT, accept: "text/html,application/xhtml+xml,text/plain,application/xml;q=0.9,*/*;q=0.5" },
@@ -85,7 +129,7 @@ export async function politeFetch(url: string, opts: FetchOptions = {}): Promise
   }
 }
 
-async function readCapped(res: Response, maxBytes: number): Promise<string> {
+async function readCapped(res: Awaited<ReturnType<typeof fetch>>, maxBytes: number): Promise<string> {
   if (!res.body) return "";
   const reader = res.body.getReader();
   const chunks: Uint8Array[] = [];

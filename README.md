@@ -24,23 +24,29 @@ everything it finds into a ranked, plain-English fix list. Working name in the U
   rate, citation rate, average position, share of voice and sentiment with 95% confidence
   ranges, plus the third-party sites the engines cite and any answers that contradict your
   brand facts.
-- **Database schema** for the full PRD data model, with per-workspace row-level security.
+- **Accounts and saved sites**: sign up, add a site with its business profile and competitors,
+  verify ownership, weekly automatic re-crawls with what's new and fixed, task statuses that
+  trigger a re-check when you mark a fix done, score history, competitor comparison, and the AI
+  visibility page (edit tracked questions, run them, read every answer).
+- **Shareable free-audit reports**, rate-limited per visitor.
 
 ## Quick start
 
-Requires Node 20+.
+Requires Node 22 and a Postgres database.
 
 ```bash
 npm install
-npm run build        # builds packages/core, then the web app
-npm test             # core test suite (crawler, rules, plan, GEO metrics)
+npm run build                     # core, then platform, then the web app
+export DATABASE_URL=postgres://localhost/seobuilder
+npm run dev                       # http://localhost:3000; migrations apply on start
 ```
 
-Run the web app:
+Tests: `npm test` runs the core suite and the platform integration suite. The platform suite
+needs a disposable database in `TEST_DATABASE_URL` (it drops and recreates the `public` schema).
 
-```bash
-npm run dev          # http://localhost:3000, then enter any site
-```
+Deploying: the `Dockerfile` builds the whole workspace and `railway.json` points Railway at it
+with a health check on `/api/health`. Set `DATABASE_URL`, and optionally the engine API keys
+below, `REQUESTER_SALT` (hashes visitor IPs for rate limits) and `PAGESPEED_API_KEY`.
 
 Run an audit from the terminal:
 
@@ -60,11 +66,12 @@ Each answer is a paid API call with web search: prompts × engines × repeats. S
 ## Layout
 
 ```
+packages/platform/   Postgres, migrations, accounts, sites, job queue, scheduler
 packages/core/       Engine: crawl/ (robots, fetcher, extractor, crawler), audit/ (rules,
                      PageSpeed, scoring, Action Plan), ai/ (engines, prompts, analysis,
                      metrics, runner), cli/ (seo-audit, geo-track)
-apps/web/            Next.js + Tailwind free audit
-supabase/migrations/ Postgres schema + RLS
+apps/web/            Next.js + Tailwind app (free audit, dashboard) and worker startup
+db/migrations/       Postgres schema
 docs/                PRD, architecture, MVP plan, check catalog
 examples/            Sample brand profile for geo-track
 ```

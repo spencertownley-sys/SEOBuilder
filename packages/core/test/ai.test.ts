@@ -29,6 +29,22 @@ describe("prompt suggestions", () => {
   });
 });
 
+describe("prompt suggestions by business kind", () => {
+  it("never asks to hire or book a publisher, and drops pricing", () => {
+    const ps = suggestPrompts({ ...profile, kind: "publisher", businessType: "cruise news site", services: ["cruise industry news"], locations: [] }, 50);
+    const text = ps.map((p) => p.text).join("\n");
+    expect(text).not.toMatch(/hire|booking|cost|near me/);
+    expect(ps.some((p) => p.text === "best sources for cruise industry news")).toBe(true);
+    expect(ps.some((p) => p.intent === "brand" && p.text === "is Example Studio reliable?")).toBe(true);
+  });
+
+  it("asks stores where to buy", () => {
+    const ps = suggestPrompts({ ...profile, kind: "store", businessType: "coffee roaster", services: ["single origin coffee"], locations: [] }, 50);
+    expect(ps.map((p) => p.text)).toEqual(expect.arrayContaining(["where to buy single origin coffee", "best coffee roaster"]));
+    expect(ps.map((p) => p.text).join(" ")).not.toMatch(/hire|booking/);
+  });
+});
+
 describe("answer analysis", () => {
   it("finds mentions, order, citations and sentiment", () => {
     const m = analyzeAnswer(

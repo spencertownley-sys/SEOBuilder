@@ -1,11 +1,25 @@
--- Core data model from docs/PRD.md ("System architecture, data sources, data model").
--- Every row hangs off a workspace; row-level security limits each user to workspaces
--- they belong to (PRD: per-workspace isolation). Workers use the service role and
--- bypass RLS.
+-- Core data model from docs/PRD.md ("System architecture, data sources, data model"), for
+-- plain Postgres. Access control lives in packages/platform: every query that reads or
+-- writes site data goes through a function that first checks workspace membership.
 
 create extension if not exists pgcrypto;
 
--- ---------- tenancy ----------
+-- ---------- accounts ----------
+
+create table users (
+  id uuid primary key default gen_random_uuid(),
+  email text not null unique,
+  password_hash text not null,
+  created_at timestamptz not null default now()
+);
+
+create table sessions (
+  token_hash text primary key, -- sha256 of the cookie value; the raw token is never stored
+  user_id uuid not null references users on delete cascade,
+  expires_at timestamptz not null,
+  created_at timestamptz not null default now()
+);
+create index on sessions (user_id);
 
 create table workspaces (
   id uuid primary key default gen_random_uuid(),
@@ -18,29 +32,30 @@ create table workspaces (
 
 create table workspace_members (
   workspace_id uuid not null references workspaces on delete cascade,
-  user_id uuid not null references auth.users on delete cascade,
+  user_id uuid not null references users on delete cascade,
   role text not null default 'member' check (role in ('owner', 'admin', 'member')),
   primary key (workspace_id, user_id)
 );
-
-create or replace function is_member(ws uuid) returns boolean
-language sql stable security definer set search_path = public as $$
-  select exists (select 1 from workspace_members where workspace_id = ws and user_id = auth.uid());
-$$;
+create index on workspace_members (user_id);
 
 -- ---------- sites ----------
 
 create table sites (
   id uuid primary key default gen_random_uuid(),
   workspace_id uuid not null references workspaces on delete cascade,
+  url text not null, -- start URL for crawls
   domain text not null,
-  name text,
-  verified boolean not null default false,
-  verification_token text not null default encode(gen_random_bytes(16), 'hex'),
-  business_type text,
+  name text not null,
+  aliases text[] not null default '{}',
+  verified_at timestamptz,
+  verification_token text not null default encode(gen_random_bytes(12), 'hex'),
+  business_kind text not null default 'service' check (business_kind in ('service', 'store', 'publisher')),
+  business_type text not null default '',
   services text[] not null default '{}',
   locations text[] not null default '{}',
   brand_facts jsonb not null default '{}',
+  next_crawl_at timestamptz not null default now(),
+  next_prompt_run_at timestamptz,
   created_at timestamptz not null default now(),
   unique (workspace_id, domain)
 );
@@ -50,10 +65,13 @@ create table competitors (
   site_id uuid not null references sites on delete cascade,
   domain text,
   name text not null,
-  aliases text[] not null default '{}'
+  aliases text[] not null default '{}',
+  scores jsonb, -- latest audit scores for side-by-side comparison
+  audited_at timestamptz
 );
+create index on competitors (site_id);
 
--- OAuth tokens (Search Console, GA4) are stored encrypted by the app before insert.
+-- Encrypted OAuth tokens (Search Console, GA4) once those integrations land.
 create table integrations (
   id uuid primary key default gen_random_uuid(),
   site_id uuid not null references sites on delete cascade,
@@ -72,10 +90,13 @@ create table crawls (
   started_at timestamptz not null default now(),
   finished_at timestamptz,
   pages_crawled int not null default 0,
-  status text not null default 'queued' check (status in ('queued', 'running', 'done', 'failed')),
+  status text not null default 'running' check (status in ('running', 'done', 'failed')),
   robots jsonb,
+  new_issues text[] not null default '{}',
+  fixed_issues text[] not null default '{}',
   error text
 );
+create index on crawls (site_id, started_at desc);
 
 create table pages (
   id uuid primary key default gen_random_uuid(),
@@ -87,17 +108,14 @@ create table pages (
   meta_description text,
   canonical text,
   h1 text[] not null default '{}',
-  headings jsonb,
   schema_types text[] not null default '{}',
-  word_count int,
-  cwv jsonb
+  word_count int
 );
 create index on pages (crawl_id);
 
 create table issues (
   id uuid primary key default gen_random_uuid(),
   site_id uuid not null references sites on delete cascade,
-  page_id uuid references pages on delete set null,
   type text not null,
   severity text not null check (severity in ('critical', 'warning', 'notice')),
   module text not null check (module in ('seo', 'geo', 'both')),
@@ -107,7 +125,7 @@ create table issues (
 );
 create unique index issues_open_type on issues (site_id, type) where resolved_at is null;
 
--- ---------- keywords + rankings ----------
+-- ---------- keywords + rankings (awaiting a data provider) ----------
 
 create table keywords (
   id uuid primary key default gen_random_uuid(),
@@ -136,12 +154,28 @@ create table prompts (
   text text not null,
   intent text not null check (intent in ('discovery', 'comparison', 'how-to', 'pricing', 'brand')),
   location text,
-  active boolean not null default true
+  active boolean not null default true,
+  created_at timestamptz not null default now(),
+  unique (site_id, text)
 );
+
+create table prompt_runs (
+  id uuid primary key default gen_random_uuid(),
+  site_id uuid not null references sites on delete cascade,
+  started_at timestamptz not null default now(),
+  finished_at timestamptz,
+  status text not null default 'running' check (status in ('running', 'done', 'failed')),
+  engines text[] not null default '{}',
+  metrics jsonb, -- VisibilityMetrics overall + byEngine + topSources
+  error text
+);
+create index on prompt_runs (site_id, started_at desc);
 
 create table ai_runs (
   id uuid primary key default gen_random_uuid(),
-  prompt_id uuid not null references prompts on delete cascade,
+  prompt_run_id uuid not null references prompt_runs on delete cascade,
+  prompt_id uuid references prompts on delete set null,
+  prompt_text text not null,
   engine text not null,
   model text not null,
   run_at timestamptz not null default now(),
@@ -149,7 +183,7 @@ create table ai_runs (
   cited_urls text[] not null default '{}',
   error text
 );
-create index on ai_runs (prompt_id, run_at desc);
+create index on ai_runs (prompt_run_id);
 
 create table ai_mentions (
   id uuid primary key default gen_random_uuid(),
@@ -169,77 +203,52 @@ create index on ai_mentions (ai_run_id);
 create table tasks (
   id text not null, -- stable per site + issue type (core: taskId)
   site_id uuid not null references sites on delete cascade,
-  source_issue uuid references issues on delete set null,
+  source text not null check (source in ('audit', 'geo')),
   type text not null,
   module text not null check (module in ('seo', 'geo', 'both')),
+  severity text not null check (severity in ('critical', 'warning', 'notice')),
   title text not null,
   why text not null,
   steps text[] not null default '{}',
+  urls text[] not null default '{}',
   draft_fix text,
   impact int not null check (impact between 1 and 5),
   effort int not null check (effort between 1 and 5),
   confidence real not null check (confidence between 0 and 1),
   priority real not null,
   status text not null default 'todo' check (status in ('todo', 'in_progress', 'done', 'ignored')),
-  assignee uuid references auth.users,
+  resolved boolean not null default false, -- the last check no longer found the issue
+  assignee uuid references users on delete set null,
   updated_at timestamptz not null default now(),
   primary key (site_id, id)
 );
 
 create table score_snapshots (
   site_id uuid not null references sites on delete cascade,
-  date date not null,
+  taken_at timestamptz not null default now(),
   technical int,
   search int,
   ai_visibility int,
   ai_readiness int,
-  primary key (site_id, date)
+  primary key (site_id, taken_at)
 );
 
--- ---------- row-level security ----------
+-- ---------- background jobs ----------
 
-alter table workspaces enable row level security;
-alter table workspace_members enable row level security;
-alter table sites enable row level security;
-alter table competitors enable row level security;
-alter table integrations enable row level security;
-alter table crawls enable row level security;
-alter table pages enable row level security;
-alter table issues enable row level security;
-alter table keywords enable row level security;
-alter table rank_snapshots enable row level security;
-alter table prompts enable row level security;
-alter table ai_runs enable row level security;
-alter table ai_mentions enable row level security;
-alter table tasks enable row level security;
-alter table score_snapshots enable row level security;
-
-create policy ws_read on workspaces for select using (is_member(id));
-create policy ws_members_read on workspace_members for select using (is_member(workspace_id));
-create policy sites_rw on sites for all using (is_member(workspace_id)) with check (is_member(workspace_id));
-
--- Child tables: access follows the parent site.
-create or replace function site_member(s uuid) returns boolean
-language sql stable security definer set search_path = public as $$
-  select exists (select 1 from sites where id = s and is_member(workspace_id));
-$$;
-
-create policy competitors_rw on competitors for all using (site_member(site_id)) with check (site_member(site_id));
--- Tokens are never readable from the client; only workers (service role) touch them.
-create policy integrations_none on integrations for select using (false);
-create policy crawls_read on crawls for select using (site_member(site_id));
-create policy pages_read on pages for select using (exists (select 1 from crawls c where c.id = crawl_id and site_member(c.site_id)));
-create policy issues_read on issues for select using (site_member(site_id));
-create policy keywords_rw on keywords for all using (site_member(site_id)) with check (site_member(site_id));
-create policy ranks_read on rank_snapshots for select using (exists (select 1 from keywords k where k.id = keyword_id and site_member(k.site_id)));
-create policy prompts_rw on prompts for all using (site_member(site_id)) with check (site_member(site_id));
-create policy ai_runs_read on ai_runs for select using (exists (select 1 from prompts p where p.id = prompt_id and site_member(p.site_id)));
-create policy ai_mentions_read on ai_mentions for select using (
-  exists (select 1 from ai_runs r join prompts p on p.id = r.prompt_id where r.id = ai_run_id and site_member(p.site_id))
+create table jobs (
+  id uuid primary key default gen_random_uuid(),
+  kind text not null check (kind in ('public_audit', 'site_crawl', 'prompt_run', 'competitor_audit')),
+  payload jsonb not null default '{}',
+  status text not null default 'queued' check (status in ('queued', 'running', 'done', 'failed')),
+  run_after timestamptz not null default now(),
+  attempts int not null default 0,
+  locked_at timestamptz,
+  progress text,
+  result jsonb,
+  error text,
+  requester_hash text, -- hashed client IP for public audits (rate limiting), never the raw IP
+  created_at timestamptz not null default now(),
+  finished_at timestamptz
 );
-create policy tasks_read on tasks for select using (site_member(site_id));
--- Users change status/assignee; workers write the rest.
-create policy tasks_update on tasks for update using (site_member(site_id)) with check (site_member(site_id));
-create policy scores_read on score_snapshots for select using (site_member(site_id));
-revoke update on tasks from authenticated;
-grant update (status, assignee, updated_at) on tasks to authenticated;
+create index jobs_ready on jobs (run_after) where status = 'queued';
+create index on jobs (requester_hash, created_at) where kind = 'public_audit';
