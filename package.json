@@ -1,0 +1,21 @@
+{
+  "name": "seobuilder",
+  "private": true,
+  "description": "SEO + GEO platform: be found by people and by AI.",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "build": "npm run build -w @seobuilder/core && npm run build -w @seobuilder/platform && npm run build -w @seobuilder/web",
+    "test": "npm test -w @seobuilder/core && npm test -w @seobuilder/platform",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "dev": "npm run build -w @seobuilder/core && npm run build -w @seobuilder/platform && npm run dev -w @seobuilder/web",
+    "audit": "node packages/core/dist/cli/audit.js",
+    "geo": "node packages/core/dist/cli/geo.js",
+    "migrate": "npm run migrate -w @seobuilder/platform"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
