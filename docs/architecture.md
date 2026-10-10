@@ -127,3 +127,15 @@ share one). Audit and AI-answer tasks sync separately, so one never closes the o
 **AI engines need keys.** Prompt tracking runs only for engines whose API key is set on the
 server (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `PERPLEXITY_API_KEY`); with
 none set, the AI tab says so and AI Visibility falls back to on-site readiness.
+
+## Two domains, one codebase
+
+`apps/web/proxy.ts` routes by host. mentionful.com is the app. betterseobuilder.com is the
+advertising landing page in `app/(promo)/better`: a scroll-scrubbed film (generated with
+Higgsfield: Kling v3.0, one continuous 10 s take, cut into four 61-frame clips that share their
+seam frames, encoded with 8-frame GOPs for scrubbing) under four chapters, then stats, steps, a
+comparison and a final call to action. Its forms submit to `mentionful.com/audit`, so the free
+audit runs in the app. The landing page runs as its own Railway service with `SITE_MODE=landing`
+and no `DATABASE_URL` (the plan allows two custom domains per service); on that host anything
+except the page, its assets, `/api/health` and `robots.txt` redirects to the app. `www.` redirects
+to the apex on both domains.

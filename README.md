@@ -1,10 +1,13 @@
-# SEOBuilder — SEO + GEO platform
+# Mentionful — SEO + GEO platform
 
 **Be found by people and by AI.** One workspace that tells a site owner how visible they are
 in classic search (SEO) and in AI answers (GEO, generative engine optimization), and turns
-everything it finds into a ranked, plain-English fix list. Working name in the UI: *Rankwell*.
+everything it finds into a ranked, plain-English fix list. The product is **Mentionful**
+(mentionful.com); **betterseobuilder.com** is its advertising landing page.
 
-- **Live:** https://web-production-84da0.up.railway.app (Railway project `seobuilder`; every push to `main` deploys)
+- **Live:** https://mentionful.com (app) and https://betterseobuilder.com (landing page). Railway
+  project `seobuilder`: the `web` service serves the app, the `landing` service (`SITE_MODE=landing`,
+  no database) serves the landing page. Every push to `main` deploys both.
 - **Product spec:** [docs/PRD.md](docs/PRD.md) (snapshot of the planning doc)
 - **How it's built:** [docs/architecture.md](docs/architecture.md)
 - **What's done and what's next:** [docs/mvp-plan.md](docs/mvp-plan.md)

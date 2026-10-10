@@ -35,7 +35,7 @@ Status as of Oct 10, 2026.
 - **Default model and run budget for prompt tracking.** Engine calls are the main variable cost
   (PRD). Run a 20-prompt × 3-engine × 2-repeat batch on a real site and record cost per run
   before setting plan limits.
-- **Name and domain.** "Rankwell" is still a placeholder in the UI.
+- ~~Name and domain.~~ Decided: **Mentionful** (mentionful.com), with betterseobuilder.com as the advertising landing page.
 
 ## Phase 0 tie-in
 
