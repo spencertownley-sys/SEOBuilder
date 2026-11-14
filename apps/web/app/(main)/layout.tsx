@@ -73,6 +73,9 @@ export default async function MainLayout({ children }: { children: React.ReactNo
           <Link href="/bot" className="underline hover:text-ink">
             Our crawler
           </Link>
+          <button type="button" data-cookie-settings className="underline hover:text-ink">
+            Cookie settings
+          </button>
         </nav>
         <p>
           Mentionful · Scores and impact are estimates, not guarantees of rankings or AI citations. Our crawler identifies as{" "}

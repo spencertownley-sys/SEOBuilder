@@ -249,6 +249,9 @@ export default function BetterSeoBuilder() {
             <a href={`${APP_URL}/cookies`} className="underline underline-offset-4 hover:text-[var(--ink)]">
               Cookies
             </a>
+            <button type="button" data-cookie-settings className="underline underline-offset-4 hover:text-[var(--ink)]">
+              Cookie settings
+            </button>
           </nav>
         </div>
       </footer>
