@@ -12,7 +12,7 @@ const csp = [
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data:",
   "font-src 'self'",
-  "media-src 'self'",
+  "media-src 'self' blob:", // the scroll-scrub film plays from blob: URLs
   `connect-src 'self' https://cloudflareinsights.com${dev ? " ws:" : ""}`,
   "form-action 'self' https://mentionful.com",
   "frame-ancestors 'none'",
