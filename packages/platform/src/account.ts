@@ -79,6 +79,7 @@ export async function deleteAccount(userId: string): Promise<void> {
     );
     await q("delete from workspaces where id = any($1)", [wsIds], c);
     await q("delete from users where id = $1", [userId], c);
-    await q("delete from auth_attempts where key = $1 or key = $2", [`email:${normalizeEmail(user.email)}`, `verify:${userId}`], c);
+    const email = normalizeEmail(user.email);
+    await q("delete from auth_attempts where key = any($1)", [[`email:${email}`, `reset:${email}`, `verify:${userId}`]], c);
   });
 }
