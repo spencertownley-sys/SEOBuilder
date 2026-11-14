@@ -7,9 +7,9 @@ import { createSiteAction } from "@/app/actions";
 
 export const metadata = { title: "Add a site" };
 
-export default async function NewSite({ searchParams }: { searchParams: Promise<{ error?: string }> }) {
+export default async function NewSite({ searchParams }: { searchParams: Promise<{ error?: string; notice?: string }> }) {
   await requireUser();
-  const { error } = await searchParams;
+  const { error, notice } = await searchParams;
   return (
     <div className="mx-auto max-w-xl space-y-6">
       <div>
@@ -18,7 +18,7 @@ export default async function NewSite({ searchParams }: { searchParams: Promise<
           A few details about the business let us suggest the questions people ask AI assistants, and spot when competitors are named instead of you.
         </p>
       </div>
-      <Messages error={error} />
+      <Messages error={error} notice={notice} />
       <form action={createSiteAction} className="space-y-4 rounded-xl border border-slate-200 bg-white p-6">
         <Field label="Website" name="url" required placeholder="yourbusiness.com" />
         <Field label="Business name" name="name" placeholder="Townley Photography" hint="How customers and AI assistants refer to you." />
