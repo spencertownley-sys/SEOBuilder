@@ -7,6 +7,8 @@ import { NextResponse, type NextRequest } from "next/server";
 // host other than the page and its assets redirects to the app.
 const LANDING_HOSTS = new Set(["betterseobuilder.com"]);
 const APP_URL = process.env.APP_URL ?? "https://mentionful.com";
+// Served by the landing host itself instead of redirecting to the app.
+const LANDING_LOCAL_PATHS = new Set(["/api/health", "/robots.txt", "/sitemap.xml", "/.well-known/security.txt", "/cookie-banner.js", "/cookie-banner.css"]);
 
 function hostOf(req: NextRequest): string {
   return (req.headers.get("x-forwarded-host") ?? req.headers.get("host") ?? "").split(",")[0]!.trim().split(":")[0]!.toLowerCase();
@@ -26,7 +28,7 @@ export function proxy(req: NextRequest) {
 
   if (pathname === "/") return NextResponse.rewrite(new URL("/better", req.url));
   if (pathname === "/better") return NextResponse.redirect(new URL("/", req.url), 308);
-  if (pathname.startsWith("/better/") || pathname === "/api/health" || pathname === "/robots.txt") return NextResponse.next();
+  if (pathname.startsWith("/better/") || LANDING_LOCAL_PATHS.has(pathname)) return NextResponse.next();
   return NextResponse.redirect(`${APP_URL}${pathname}${search}`, 308);
 }
 
