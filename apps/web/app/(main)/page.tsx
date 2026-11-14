@@ -5,8 +5,8 @@ import { AuditForm } from "@/components/audit-form";
 
 export const metadata: Metadata = { alternates: { canonical: "/" } };
 
-export default async function Home({ searchParams }: { searchParams: Promise<{ error?: string }> }) {
-  const { error } = await searchParams;
+export default async function Home({ searchParams }: { searchParams: Promise<{ error?: string; notice?: string }> }) {
+  const { error, notice } = await searchParams;
   return (
     <div className="space-y-12">
       <section className="space-y-4">
@@ -15,7 +15,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ e
           Paste your website and get a free audit in a minute or two: how healthy your site is for Google, how ready it is for ChatGPT, Claude,
           Perplexity and Gemini, and the ten fixes that matter most, in plain English.
         </p>
-        <Messages error={error} />
+        <Messages error={error} notice={notice} />
         <AuditForm />
       </section>
       <section className="grid gap-4 sm:grid-cols-3">

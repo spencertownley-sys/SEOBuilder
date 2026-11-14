@@ -90,6 +90,13 @@ export default function PrivacyPage() {
           items={[
             "EU and UK visitors: access, correction, deletion, restriction, objection, portability, withdrawing consent, and the right to complain to your data protection authority.",
             "California and other US state residents: the right to know, delete and correct, and to opt out of sale or sharing. This site does not sell or share personal information, and it honours Global Privacy Control signals.",
+            <>
+              You can download your data and delete your account yourself on the{" "}
+              <Link href="/app/account" className="font-medium text-accent underline">
+                Account page
+              </Link>{" "}
+              once you are signed in.
+            </>,
             <>To use any of these rights, email {contact}. You will get an answer within 30 days. You will never be treated differently for using them.</>,
           ]}
         />

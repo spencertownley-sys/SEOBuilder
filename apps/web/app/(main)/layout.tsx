@@ -25,13 +25,16 @@ export default async function MainLayout({ children }: { children: React.ReactNo
                 <Link href="/app" className="font-medium text-slate-700 hover:text-ink">
                   Sites
                 </Link>
-                <span className="hidden text-slate-400 sm:inline">{user.email}</span>
+                <Link href="/app/account" className="text-slate-600 hover:text-ink">
+                  Account
+                </Link>
+                <span className="hidden text-slate-400 md:inline">{user.email}</span>
                 <form action={logOutAction}>
                   <button type="submit" className="text-slate-600 hover:text-ink">
                     Log out
                   </button>
                 </form>
-                <form action={logOutEverywhereAction} className="hidden sm:block">
+                <form action={logOutEverywhereAction} className="hidden lg:block">
                   <button type="submit" className="text-slate-500 hover:text-ink">
                     Log out of all devices
                   </button>

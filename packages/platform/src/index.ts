@@ -5,6 +5,7 @@ import { startWorker, type Handler, type JobKind } from "./jobs.js";
 export * from "./db.js";
 export * from "./migrate.js";
 export * from "./auth.js";
+export * from "./account.js";
 export * from "./sites.js";
 export * from "./tasks.js";
 export * from "./audits.js";

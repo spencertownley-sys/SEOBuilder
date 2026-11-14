@@ -357,6 +357,35 @@ describe("fair-use limits (SB-02)", () => {
   });
 });
 
+describe("account export and deletion (SB-20)", () => {
+  it("exports the account's sites, prompts and answers, then deletes every row", async () => {
+    const henry = await P.signUp("henry@example.com", "henry's long password");
+    const site = await P.createSite(henry.id, { url: "henry.example", businessType: "bakery", locations: "Tacoma", competitors: "Rival Bakery | rival-bakery.example" });
+    const run = await P.one<{ id: string }>("insert into prompt_runs (site_id, engines) values ($1, '{perplexity}') returning id", [site]);
+    const prompt = await P.one<{ id: string; text: string }>("select id, text from prompts where site_id = $1 limit 1", [site]);
+    await P.q("insert into ai_runs (prompt_run_id, prompt_id, prompt_text, engine, model, answer_text) values ($1, $2, $3, 'perplexity', 'fake', 'Henry Bakery is great')", [run!.id, prompt!.id, prompt!.text]);
+    await P.createSession(henry.id);
+
+    const data = await P.exportAccountData(henry.id);
+    expect((data.account as { email: string }).email).toBe("henry@example.com");
+    expect(data.sites).toHaveLength(1);
+    expect((data.prompts as unknown[]).length).toBeGreaterThan(0);
+    expect(data.aiAnswers).toEqual([expect.objectContaining({ answer_text: "Henry Bakery is great" })]);
+    expect(data.competitors).toEqual([expect.objectContaining({ domain: "rival-bakery.example" })]);
+    expect(JSON.stringify(data)).not.toMatch(/password|token_hash/);
+
+    await P.deleteAccount(henry.id);
+    for (const [table, col] of [["users", "id"], ["sessions", "user_id"], ["workspace_members", "user_id"], ["auth_tokens", "user_id"]] as const) {
+      expect(await P.q(`select 1 from ${table} where ${col} = $1`, [henry.id]), table).toHaveLength(0);
+    }
+    expect(await P.q("select 1 from sites where id = $1", [site])).toHaveLength(0);
+    expect(await P.q("select 1 from prompts where site_id = $1", [site])).toHaveLength(0);
+    expect(await P.q("select 1 from ai_runs where prompt_run_id = $1", [run!.id])).toHaveLength(0);
+    expect(await P.q("select 1 from jobs where payload->>'siteId' = $1", [site])).toHaveLength(0);
+    expect(await P.listSites(alice.id)).toHaveLength(1); // nobody else is touched
+  });
+});
+
 describe("public audits", () => {
   it("rate-limits per requester and reuses fresh reports", async () => {
     const ids = new Set<string>();

@@ -79,7 +79,7 @@ export default function TermsPage() {
 
       <Section title="7. Ending your account">
         <p>
-          You can stop using the service at any time and ask for your account to be deleted by emailing {contact}. The operator may suspend or
+          You can stop using the service at any time and delete your account yourself on the Account page, or by emailing {contact}. The operator may suspend or
           close an account that breaks these terms or puts the service or other people at risk, and will say why where it is safe to do so.
         </p>
       </Section>

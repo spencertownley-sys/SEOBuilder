@@ -9,6 +9,7 @@ import {
   AuthError,
   createSession,
   createSite,
+  deleteAccount,
   deletePrompt,
   deleteSite,
   destroyAllSessions,
@@ -136,6 +137,14 @@ export async function logOutAction(): Promise<void> {
   await destroySession(jar.get(SESSION_COOKIE)?.value);
   jar.delete(SESSION_COOKIE);
   redirect("/");
+}
+
+export async function deleteAccountAction(formData: FormData): Promise<void> {
+  const user = await requireUser();
+  if (str(formData, "confirm").trim().toLowerCase() !== user.email) redirect(withMessage("/app/account", "error", "confirm_email_to_delete"));
+  await deleteAccount(user.id);
+  (await cookies()).delete(SESSION_COOKIE);
+  redirect(withMessage("/", "notice", "account_deleted"));
 }
 
 export async function logOutEverywhereAction(): Promise<void> {

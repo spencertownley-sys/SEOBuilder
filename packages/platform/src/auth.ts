@@ -76,7 +76,7 @@ export function needsRehash(stored: string): boolean {
 // Spends the same scrypt work on unknown emails so response time doesn't reveal which emails exist.
 const DUMMY_HASH = `scrypt$${PARAMS}$AAAAAAAAAAAAAAAAAAAAAA==$` + Buffer.alloc(64).toString("base64");
 
-function normalizeEmail(email: string): string {
+export function normalizeEmail(email: string): string {
   return email.trim().toLowerCase();
 }
 
