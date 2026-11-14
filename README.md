@@ -49,8 +49,12 @@ Tests: `npm test` runs the core suite and the platform integration suite. The pl
 needs a disposable database in `TEST_DATABASE_URL` (it drops and recreates the `public` schema).
 
 Deploying: the `Dockerfile` builds the whole workspace and `railway.json` points Railway at it
-with a health check on `/api/health`. Set `DATABASE_URL`, and optionally the engine API keys
-below, `REQUESTER_SALT` (hashes visitor IPs for rate limits) and `PAGESPEED_API_KEY`.
+with a health check on `/api/health`. Set `DATABASE_URL` and `REQUESTER_SALT` (a random 32-byte
+value that hashes visitor IPs for rate limits; the app refuses to start in production without it),
+and optionally the engine API keys below, `RESEND_API_KEY` + `EMAIL_FROM` (email verification and
+password reset) and `PAGESPEED_API_KEY`. Fair-use limits can be tuned with
+`MAX_SITES_PER_WORKSPACE` (3), `PROMPT_RUN_COOLDOWN_HOURS` (24),
+`MAX_PROMPT_RUNS_PER_WORKSPACE_PER_DAY` (3) and `MAX_PROMPT_RUNS_PER_DAY` (200).
 
 Run an audit from the terminal:
 

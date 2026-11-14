@@ -79,10 +79,20 @@ async function runOne(job: JobRow, handlers: Record<JobKind, Handler>): Promise<
   }
 }
 
-/** Enqueues weekly re-crawls and AI prompt runs that are due. */
+export const REQUESTER_HASH_DAYS = 7;
+export const PUBLIC_REPORT_DAYS = 90;
+
+/** Retention promised in the privacy policy: IP hashes for 7 days, free audit reports for 90. */
+export async function applyRetention(): Promise<void> {
+  await q("update jobs set requester_hash = null where requester_hash is not null and created_at < now() - make_interval(days => $1)", [REQUESTER_HASH_DAYS]);
+  await q("delete from jobs where kind = 'public_audit' and created_at < now() - make_interval(days => $1)", [PUBLIC_REPORT_DAYS]);
+}
+
+/** Enqueues weekly re-crawls and AI prompt runs that are due, and applies data retention. */
 export async function scheduleDue(): Promise<void> {
   await purgeAuthAttempts();
   await purgeExpiredSessions();
+  await applyRetention();
   // Bump next_crawl_at in the same statement so two schedulers can't both enqueue a site.
   // Weekly crawls only for sites whose owner proved ownership (SB-10); others get the first crawl
   // when they are added, and manual re-checks.

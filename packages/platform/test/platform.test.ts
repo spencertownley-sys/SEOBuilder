@@ -380,6 +380,31 @@ describe("public audits", () => {
     await P.q("delete from jobs where kind = 'public_audit' and payload->>'url' like '%?q=%'");
   });
 
+  it("forgets IP hashes after 7 days and deletes reports after 90 (SB-17)", async () => {
+    const old = await P.requestPublicAudit(`${origin}/?retention=1`, "198.51.100.99");
+    const older = await P.requestPublicAudit(`${origin}/?retention=2`, "198.51.100.98");
+    const fresh = await P.requestPublicAudit(`${origin}/?retention=3`, "198.51.100.97");
+    await P.q("update jobs set created_at = now() - interval '8 days', status = 'done' where id = $1", [old]);
+    await P.q("update jobs set created_at = now() - interval '91 days', status = 'done' where id = $1", [older]);
+    await P.scheduleDue();
+    const rows = await P.q<{ id: string; requester_hash: string | null }>("select id, requester_hash from jobs where id = any($1)", [[old, older, fresh]]);
+    expect(rows.find((r) => r.id === old)?.requester_hash).toBeNull();
+    expect(rows.find((r) => r.id === older)).toBeUndefined();
+    expect(rows.find((r) => r.id === fresh)?.requester_hash).toMatch(/^[0-9a-f]{32}$/);
+    await P.q("delete from jobs where id = any($1)", [[old, fresh]]);
+  });
+
+  it("refuses to hash IPs without REQUESTER_SALT in production", async () => {
+    await withEnv({ NODE_ENV: "production", REQUESTER_SALT: "" }, async () => {
+      delete process.env.REQUESTER_SALT;
+      expect(() => P.hashRequester("203.0.113.1")).toThrow(/REQUESTER_SALT/);
+      expect(() => P.checkProductionConfig()).toThrow(/REQUESTER_SALT/);
+    });
+    await withEnv({ NODE_ENV: "production", REQUESTER_SALT: "test-salt" }, async () => {
+      expect(P.hashRequester("203.0.113.1")).toMatch(/^[0-9a-f]{32}$/);
+    });
+  });
+
   it("runs end to end through the background worker", async () => {
     await P.q("delete from jobs where kind = 'public_audit'");
     const id = await P.requestPublicAudit(origin, "192.0.2.50");
