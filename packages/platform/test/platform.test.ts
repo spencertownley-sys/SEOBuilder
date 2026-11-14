@@ -311,12 +311,24 @@ describe("fair-use limits (SB-02)", () => {
 describe("public audits", () => {
   it("rate-limits per requester and reuses fresh reports", async () => {
     const ids = new Set<string>();
-    for (let i = 0; i < P.PUBLIC_AUDITS_PER_HOUR; i++) ids.add(await P.requestPublicAudit(`${origin}/?v=${i}`, "203.0.113.9"));
+    for (let i = 0; i < P.PUBLIC_AUDITS_PER_HOUR; i++) {
+      const id = await P.requestPublicAudit(`${origin}/?v=${i}`, "203.0.113.9");
+      ids.add(id);
+      await P.q("update jobs set status = 'done' where id = $1", [id]); // finished, so the per-requester queue cap doesn't apply
+    }
     expect(ids.size).toBe(P.PUBLIC_AUDITS_PER_HOUR);
     await expect(P.requestPublicAudit(`${origin}/?v=99`, "203.0.113.9")).rejects.toThrow(/last hour/);
     const again = await P.requestPublicAudit(`${origin}/?v=0`, "198.51.100.1");
     expect(ids.has(again)).toBe(true);
     await expect(P.requestPublicAudit("not a url", "198.51.100.1")).rejects.toThrow(/website address/);
+  });
+
+  it("caps how many audits one requester can have queued at once", async () => {
+    const ip = "198.51.100.200";
+    for (let i = 0; i < P.MAX_QUEUED_PUBLIC_AUDITS_PER_REQUESTER; i++) await P.requestPublicAudit(`${origin}/?q=${i}`, ip);
+    await expect(P.requestPublicAudit(`${origin}/?q=99`, ip)).rejects.toThrow(/already have free audits running/);
+    await P.requestPublicAudit(`${origin}/?q=99`, "198.51.100.201"); // someone else is unaffected
+    await P.q("delete from jobs where kind = 'public_audit' and payload->>'url' like '%?q=%'");
   });
 
   it("runs end to end through the background worker", async () => {

@@ -26,8 +26,16 @@ export async function setSessionCookie(token: string): Promise<void> {
   });
 }
 
-/** Client IP for rate limiting. Railway's edge sets X-Forwarded-For; the first entry is the client. */
+/**
+ * Client IP for rate limiting. Railway's edge appends the address it saw to X-Forwarded-For, so
+ * the right-most entry is the one a client can't forge; anything to its left was sent by the
+ * client and is ignored.
+ */
 export async function clientIp(): Promise<string> {
   const h = await headers();
-  return h.get("x-forwarded-for")?.split(",")[0]?.trim() || h.get("x-real-ip") || "unknown";
+  const parts = (h.get("x-forwarded-for") ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  return parts[parts.length - 1] ?? h.get("x-real-ip") ?? "unknown";
 }

@@ -7,6 +7,8 @@ import { InputError, normalizeSiteUrl } from "./sites.js";
 // Free audit limits: each request is up to 50 page fetches plus a PageSpeed call.
 export const PUBLIC_AUDITS_PER_HOUR = Number(process.env.PUBLIC_AUDITS_PER_HOUR ?? 6);
 export const MAX_QUEUED_PUBLIC_AUDITS = Number(process.env.MAX_QUEUED_PUBLIC_AUDITS ?? 25);
+// So one client can't fill the shared queue on its own.
+export const MAX_QUEUED_PUBLIC_AUDITS_PER_REQUESTER = Number(process.env.MAX_QUEUED_PUBLIC_AUDITS_PER_REQUESTER ?? 2);
 
 export class RateLimitError extends Error {}
 
@@ -20,14 +22,21 @@ export async function requestPublicAudit(rawUrl: string, ip: string): Promise<st
     [requester],
   );
   if ((recent?.n ?? 0) >= PUBLIC_AUDITS_PER_HOUR) throw new RateLimitError(`You've run ${PUBLIC_AUDITS_PER_HOUR} free audits in the last hour. Try again later, or sign up to save sites.`);
-  const queued = await one<{ n: number }>("select count(*)::int as n from jobs where kind = 'public_audit' and status in ('queued','running')");
-  if ((queued?.n ?? 0) >= MAX_QUEUED_PUBLIC_AUDITS) throw new RateLimitError("We're running a lot of audits right now. Please try again in a few minutes.");
   // Reuse a fresh report of the same URL rather than crawling it again.
   const existing = await one<{ id: string }>(
     "select id from jobs where kind = 'public_audit' and payload->>'url' = $1 and status <> 'failed' and created_at > now() - interval '10 minutes' order by created_at desc limit 1",
     [url],
   );
   if (existing) return existing.id;
+  const mine = await one<{ n: number }>(
+    "select count(*)::int as n from jobs where kind = 'public_audit' and requester_hash = $1 and status in ('queued','running')",
+    [requester],
+  );
+  if ((mine?.n ?? 0) >= MAX_QUEUED_PUBLIC_AUDITS_PER_REQUESTER) {
+    throw new RateLimitError("You already have free audits running. Wait for them to finish, then try again.");
+  }
+  const queued = await one<{ n: number }>("select count(*)::int as n from jobs where kind = 'public_audit' and status in ('queued','running')");
+  if ((queued?.n ?? 0) >= MAX_QUEUED_PUBLIC_AUDITS) throw new RateLimitError("We're running a lot of audits right now. Please try again in a few minutes.");
   return enqueue("public_audit", { url }, { requesterHash: requester });
 }
 
