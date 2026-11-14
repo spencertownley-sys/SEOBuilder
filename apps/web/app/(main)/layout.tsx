@@ -7,7 +7,12 @@ export const metadata: Metadata = {
   title: { default: "Mentionful: be found by people and by AI", template: "%s · Mentionful" },
   description:
     "A free SEO + AI visibility audit with a ranked, plain-English fix list, plus weekly tracking of how ChatGPT, Claude, Gemini and Perplexity talk about you.",
-  openGraph: { siteName: "Mentionful", type: "website" },
+  openGraph: {
+    siteName: "Mentionful",
+    type: "website",
+    images: [{ url: "/og.png", width: 1200, height: 630, alt: "Mentionful: be found by people and by AI." }],
+  },
+  twitter: { card: "summary_large_image", images: ["/og.png"] },
 };
 
 export default async function MainLayout({ children }: { children: React.ReactNode }) {
