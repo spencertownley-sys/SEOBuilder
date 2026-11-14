@@ -1,5 +1,5 @@
 export * from "./types.js";
-export { crawlSite, type CrawlOptions } from "./crawl/crawler.js";
+export { crawlSite, RobotsUnavailableError, type CrawlOptions } from "./crawl/crawler.js";
 export { politeFetch, isPrivateAddress, LEGACY_BOT_TOKEN, USER_AGENT } from "./crawl/fetcher.js";
 export { parseRobots, isAllowed, aiBotAccess, AI_BOTS, AI_ANSWER_BOTS } from "./crawl/robots.js";
 export { extractPage } from "./crawl/extract.js";

@@ -57,9 +57,16 @@ export default async function MainLayout({ children }: { children: React.ReactNo
           <Link href="/cookies" className="underline hover:text-ink">
             Cookies
           </Link>
+          <Link href="/bot" className="underline hover:text-ink">
+            Our crawler
+          </Link>
         </nav>
         <p>
-          Mentionful · Scores and impact are estimates, not guarantees of rankings or AI citations. Our crawler identifies as MentionfulBot (formerly SEOBuilderBot) and obeys robots.txt.
+          Mentionful · Scores and impact are estimates, not guarantees of rankings or AI citations. Our crawler identifies as{" "}
+          <Link href="/bot" className="underline hover:text-ink">
+            MentionfulBot
+          </Link>{" "}
+          (formerly SEOBuilderBot) and obeys robots.txt.
         </p>
       </footer>
     </>

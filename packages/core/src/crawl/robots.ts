@@ -37,6 +37,8 @@ interface Rule {
 interface Group {
   agents: string[];
   rules: Rule[];
+  /** Crawl-delay in seconds, when the group sets one. */
+  crawlDelay?: number;
 }
 
 export interface Robots {
@@ -70,6 +72,9 @@ export function parseRobots(text: string): Robots {
     lastWasAgent = false;
     if (key === "sitemap") {
       sitemaps.push(value);
+    } else if (key === "crawl-delay" && current) {
+      const n = Number(value);
+      if (Number.isFinite(n) && n >= 0) current.crawlDelay = n;
     } else if ((key === "allow" || key === "disallow") && current) {
       // An empty Disallow means "allow everything" and adds no rule.
       if (value === "" && key === "disallow") continue;
@@ -147,6 +152,15 @@ export function isAllowed(robots: Robots, userAgent: string, rawPath: string): b
     }
   }
   return match ? match.allow : true;
+}
+
+/** Upper bound on the Crawl-delay we honour, so a huge value can't stall a crawl for hours. */
+export const MAX_CRAWL_DELAY_SECONDS = 10;
+
+/** The Crawl-delay (seconds, capped) that applies to this user agent, or 0 when none is set. */
+export function crawlDelayFor(robots: Robots, userAgent: string): number {
+  const d = groupFor(robots, userAgent)?.crawlDelay ?? 0;
+  return Math.min(d, MAX_CRAWL_DELAY_SECONDS);
 }
 
 export function aiBotAccess(robots: Robots): Record<string, boolean> {
