@@ -74,6 +74,14 @@ const list = (v: string | string[] | undefined) =>
     .filter(Boolean)
     .slice(0, 20);
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Throws InputError (shown as a friendly message) instead of letting Postgres reject a bad id with a 500. */
+export function requireUuid(id: string, code: string): string {
+  if (!UUID.test(id)) throw new InputError("That item no longer exists.", code);
+  return id;
+}
+
 /** Membership check: every read or write of site data goes through this. */
 export async function requireSite(userId: string, siteId: string, db?: Db): Promise<SiteRow> {
   if (!/^[0-9a-f-]{36}$/i.test(siteId)) throw new NotFoundError("Site not found");
@@ -241,6 +249,7 @@ export async function addCompetitor(userId: string, siteId: string, line: string
 
 export async function removeCompetitor(userId: string, siteId: string, competitorId: string): Promise<void> {
   const site = await requireSite(userId, siteId);
+  requireUuid(competitorId, "competitor_invalid");
   await q("delete from competitors where id = $1 and site_id = $2", [competitorId, site.id]);
 }
 

@@ -4,7 +4,7 @@ import { one, q, tx } from "./db.js";
 import { enqueue } from "./jobs.js";
 import { limits } from "./limits.js";
 import { RateLimitError } from "./public.js";
-import { brandProfile, InputError, requireSite, seedPrompts } from "./sites.js";
+import { brandProfile, InputError, requireSite, requireUuid, seedPrompts } from "./sites.js";
 import { snapshotScores, syncTasks } from "./tasks.js";
 
 export const MAX_PROMPTS_PER_RUN = Number(process.env.MAX_PROMPTS_PER_RUN ?? 25);
@@ -42,11 +42,13 @@ export async function addPrompt(userId: string, siteId: string, text: string, in
 
 export async function setPromptActive(userId: string, siteId: string, promptId: string, active: boolean): Promise<void> {
   const site = await requireSite(userId, siteId);
+  requireUuid(promptId, "prompt_invalid");
   await q("update prompts set active = $3 where id = $2 and site_id = $1", [site.id, promptId, active]);
 }
 
 export async function deletePrompt(userId: string, siteId: string, promptId: string): Promise<void> {
   const site = await requireSite(userId, siteId);
+  requireUuid(promptId, "prompt_invalid");
   await q("delete from prompts where id = $2 and site_id = $1", [site.id, promptId]);
 }
 

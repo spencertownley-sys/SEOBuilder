@@ -228,7 +228,7 @@ export async function addCompetitorAction(siteId: string, formData: FormData): P
 
 export async function removeCompetitorAction(siteId: string, formData: FormData): Promise<void> {
   const user = await requireUser();
-  await removeCompetitor(user.id, siteId, str(formData, "competitorId"));
+  await attempt(() => removeCompetitor(user.id, siteId, str(formData, "competitorId")), `/app/sites/${siteId}/competitors`);
   revalidatePath(`/app/sites/${siteId}/competitors`);
 }
 
@@ -242,13 +242,13 @@ export async function addPromptAction(siteId: string, formData: FormData): Promi
 
 export async function togglePromptAction(siteId: string, formData: FormData): Promise<void> {
   const user = await requireUser();
-  await setPromptActive(user.id, siteId, str(formData, "promptId"), str(formData, "active") === "1");
+  await attempt(() => setPromptActive(user.id, siteId, str(formData, "promptId"), str(formData, "active") === "1"), `/app/sites/${siteId}/ai`);
   revalidatePath(`/app/sites/${siteId}/ai`);
 }
 
 export async function deletePromptAction(siteId: string, formData: FormData): Promise<void> {
   const user = await requireUser();
-  await deletePrompt(user.id, siteId, str(formData, "promptId"));
+  await attempt(() => deletePrompt(user.id, siteId, str(formData, "promptId")), `/app/sites/${siteId}/ai`);
   revalidatePath(`/app/sites/${siteId}/ai`);
 }
 

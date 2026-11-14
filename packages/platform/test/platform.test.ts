@@ -191,6 +191,12 @@ describe("sites", () => {
     expect(await P.listSites(alice.id)).toHaveLength(1);
   });
 
+  it("answers non-UUID prompt and competitor ids with a friendly error, not a 500 (SB-24)", async () => {
+    await expect(P.setPromptActive(alice.id, siteId, "not-a-uuid", false)).rejects.toMatchObject({ code: "prompt_invalid" });
+    await expect(P.deletePrompt(alice.id, siteId, "1; drop table prompts")).rejects.toMatchObject({ code: "prompt_invalid" });
+    await expect(P.removeCompetitor(alice.id, siteId, "x")).rejects.toMatchObject({ code: "competitor_invalid" });
+  });
+
   it("parses competitor lines", () => {
     expect(P.parseCompetitor("Rival | rival.com")).toEqual({ name: "Rival", domain: "rival.com" });
     expect(P.parseCompetitor("https://www.rival.com/x")).toEqual({ name: "rival.com", domain: "rival.com" });
