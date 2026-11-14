@@ -263,6 +263,17 @@ export default function BetterSeoBuilder() {
             .
           </p>
           <p>Scores and impact are estimates, not guarantees of rankings or AI citations.</p>
+          <nav aria-label="Legal" className="flex flex-wrap gap-x-5 gap-y-2">
+            <a href={`${APP_URL}/privacy`} className="underline underline-offset-4 hover:text-[var(--ink)]">
+              Privacy
+            </a>
+            <a href={`${APP_URL}/terms`} className="underline underline-offset-4 hover:text-[var(--ink)]">
+              Terms
+            </a>
+            <a href={`${APP_URL}/cookies`} className="underline underline-offset-4 hover:text-[var(--ink)]">
+              Cookies
+            </a>
+          </nav>
         </div>
       </footer>
     </>

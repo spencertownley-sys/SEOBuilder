@@ -46,8 +46,21 @@ export default async function MainLayout({ children }: { children: React.ReactNo
         </div>
       </header>
       <main className="mx-auto max-w-5xl px-4 py-10">{children}</main>
-      <footer className="mx-auto max-w-5xl px-4 pb-10 text-xs text-slate-400">
-        Mentionful · Scores and impact are estimates, not guarantees of rankings or AI citations. Our crawler identifies as SEOBuilderBot and obeys robots.txt.
+      <footer className="mx-auto max-w-5xl space-y-3 px-4 pb-10 text-xs text-slate-400">
+        <nav aria-label="Legal" className="flex flex-wrap gap-x-4 gap-y-2">
+          <Link href="/privacy" className="underline hover:text-ink">
+            Privacy
+          </Link>
+          <Link href="/terms" className="underline hover:text-ink">
+            Terms
+          </Link>
+          <Link href="/cookies" className="underline hover:text-ink">
+            Cookies
+          </Link>
+        </nav>
+        <p>
+          Mentionful · Scores and impact are estimates, not guarantees of rankings or AI citations. Our crawler identifies as SEOBuilderBot and obeys robots.txt.
+        </p>
       </footer>
     </>
   );

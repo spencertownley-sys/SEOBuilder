@@ -29,6 +29,19 @@ export function AuthForm({ mode, action, error, next }: { mode: "login" | "signu
         <SubmitButton className="w-full py-2.5" pending={signup ? "Creating account…" : "Logging in…"}>
           {signup ? "Create account" : "Log in"}
         </SubmitButton>
+        {signup && (
+          <p className="text-xs text-slate-500">
+            By creating an account you agree to the{" "}
+            <Link href="/terms" className="font-medium text-accent underline">
+              Terms
+            </Link>{" "}
+            and{" "}
+            <Link href="/privacy" className="font-medium text-accent underline">
+              Privacy Policy
+            </Link>
+            .
+          </p>
+        )}
       </form>
       <p className="text-sm text-slate-600">
         {signup ? (
