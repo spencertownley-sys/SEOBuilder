@@ -1,7 +1,7 @@
-import { createHash } from "node:crypto";
 import type { PublicAuditResult } from "./audits.js";
 import { one } from "./db.js";
 import { enqueue, getJob } from "./jobs.js";
+import { hashRequester } from "./requester.js";
 import { InputError, normalizeSiteUrl } from "./sites.js";
 
 // Free audit limits: each request is up to 50 page fetches plus a PageSpeed call.
@@ -10,12 +10,7 @@ export const MAX_QUEUED_PUBLIC_AUDITS = Number(process.env.MAX_QUEUED_PUBLIC_AUD
 
 export class RateLimitError extends Error {}
 
-export function hashRequester(ip: string): string {
-  return createHash("sha256")
-    .update(`${process.env.REQUESTER_SALT ?? "seobuilder"}|${ip}`)
-    .digest("hex")
-    .slice(0, 32);
-}
+export { hashRequester };
 
 export async function requestPublicAudit(rawUrl: string, ip: string): Promise<string> {
   const url = normalizeSiteUrl(rawUrl).toString();

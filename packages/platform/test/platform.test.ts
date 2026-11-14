@@ -57,6 +57,30 @@ describe("auth", () => {
   });
 });
 
+describe("login throttling (SB-05)", () => {
+  it("locks an email after 10 failed logins, even for the right password", async () => {
+    await P.signUp("dave@example.com", "dave's long password");
+    for (let i = 0; i < 10; i++) await expect(P.logIn("dave@example.com", `wrong ${i}`, "198.51.100.7")).rejects.toThrow(/don't match/);
+    await expect(P.logIn("dave@example.com", "wrong again", "198.51.100.7")).rejects.toThrow(/Too many attempts/);
+    await expect(P.logIn("dave@example.com", "dave's long password", "198.51.100.8")).rejects.toThrow(/Too many attempts/);
+    await P.q("delete from auth_attempts where key = $1", [P.emailKey("dave@example.com")]);
+    expect((await P.logIn("Dave@example.com", "dave's long password")).email).toBe("dave@example.com");
+  });
+
+  it("limits attempts per IP across emails and clears the email count on success", async () => {
+    const ip = "203.0.113.77";
+    for (let i = 0; i < P.MAX_AUTH_ATTEMPTS_PER_IP; i++) await expect(P.logIn(`nobody${i}@example.com`, "whatever123", ip)).rejects.toThrow(/don't match/);
+    await expect(P.logIn("alice@example.com", "correct horse battery", ip)).rejects.toThrow(/Too many attempts/);
+    await expect(P.signUp("newcomer@example.com", "a long enough password", ip)).rejects.toThrow(/Too many attempts/);
+    await P.q("delete from auth_attempts where key = $1", [P.ipKey(ip)]);
+
+    await expect(P.logIn("alice@example.com", "wrong password", "192.0.2.1")).rejects.toThrow(/don't match/);
+    await P.logIn("alice@example.com", "correct horse battery", "192.0.2.1");
+    const left = await P.q("select 1 from auth_attempts where key = $1", [P.emailKey("alice@example.com")]);
+    expect(left).toHaveLength(0);
+  });
+});
+
 describe("sites", () => {
   it("creates a site with seeded prompts and a queued crawl", async () => {
     siteId = await P.createSite(alice.id, {

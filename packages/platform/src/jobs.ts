@@ -4,6 +4,7 @@
 import { availableEngines } from "@seobuilder/core";
 import { one, q } from "./db.js";
 import { limits } from "./limits.js";
+import { purgeAuthAttempts } from "./ratelimit.js";
 
 export type JobKind = "public_audit" | "site_crawl" | "prompt_run" | "competitor_audit";
 
@@ -79,6 +80,7 @@ async function runOne(job: JobRow, handlers: Record<JobKind, Handler>): Promise<
 
 /** Enqueues weekly re-crawls and AI prompt runs that are due. */
 export async function scheduleDue(): Promise<void> {
+  await purgeAuthAttempts();
   // Bump next_crawl_at in the same statement so two schedulers can't both enqueue a site.
   const due = await q<{ id: string }>(
     `update sites set next_crawl_at = now() + interval '7 days'

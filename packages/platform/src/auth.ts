@@ -1,6 +1,7 @@
 import { createHash, randomBytes, scrypt as scryptCb, timingSafeEqual } from "node:crypto";
 import { promisify } from "node:util";
 import { one, q, tx } from "./db.js";
+import { authThrottled, clearAuthAttempts, emailKey, ipKey, recordAuthAttempt } from "./ratelimit.js";
 
 const scrypt = promisify(scryptCb) as (pw: string, salt: Buffer, len: number) => Promise<Buffer>;
 
@@ -12,6 +13,8 @@ export interface User {
 }
 
 export class AuthError extends Error {}
+
+const TOO_MANY = "Too many attempts. Try again in 15 minutes.";
 
 export async function hashPassword(password: string): Promise<string> {
   const salt = randomBytes(16);
@@ -34,8 +37,12 @@ function normalizeEmail(email: string): string {
   return email.trim().toLowerCase();
 }
 
-export async function signUp(emailRaw: string, password: string): Promise<User> {
+/** `ip` is the client address for throttling; omit it for scripts and tests. */
+export async function signUp(emailRaw: string, password: string, ip?: string): Promise<User> {
   const email = normalizeEmail(emailRaw);
+  if (await authThrottled(email, ip)) throw new AuthError(TOO_MANY);
+  // Every signup counts against the IP, so one client can't mass-create accounts.
+  if (ip) await recordAuthAttempt([ipKey(ip)]);
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254) throw new AuthError("Enter a valid email address.");
   if (password.length < 8) throw new AuthError("Use a password of at least 8 characters.");
   if (password.length > 200) throw new AuthError("That password is too long.");
@@ -53,10 +60,18 @@ export async function signUp(emailRaw: string, password: string): Promise<User> 
   });
 }
 
-export async function logIn(emailRaw: string, password: string): Promise<User> {
-  const row = await one<User & { password_hash: string }>("select id, email, password_hash from users where email = $1", [normalizeEmail(emailRaw)]);
+export async function logIn(emailRaw: string, password: string, ip?: string): Promise<User> {
+  const email = normalizeEmail(emailRaw);
+  // Checked before scrypt: once a key is throttled even the right password is refused until the
+  // window passes, so guessing can't continue and floods don't cost CPU.
+  if (await authThrottled(email, ip)) throw new AuthError(TOO_MANY);
+  const row = await one<User & { password_hash: string }>("select id, email, password_hash from users where email = $1", [email]);
   const ok = await verifyPassword(password, row?.password_hash ?? DUMMY_HASH);
-  if (!row || !ok) throw new AuthError("That email and password don't match.");
+  if (!row || !ok) {
+    await recordAuthAttempt(ip ? [emailKey(email), ipKey(ip)] : [emailKey(email)]);
+    throw new AuthError("That email and password don't match.");
+  }
+  await clearAuthAttempts(emailKey(email));
   return { id: row.id, email: row.email };
 }
 

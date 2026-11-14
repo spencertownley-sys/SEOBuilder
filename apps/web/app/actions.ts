@@ -70,7 +70,7 @@ function safeNext(next: string): string {
 
 export async function signUpAction(formData: FormData): Promise<void> {
   await attempt(async () => {
-    const user = await signUp(str(formData, "email"), str(formData, "password"));
+    const user = await signUp(str(formData, "email"), str(formData, "password"), await clientIp());
     await setSessionCookie(await createSession(user.id));
   }, "/signup");
   redirect(safeNext(str(formData, "next")));
@@ -78,7 +78,7 @@ export async function signUpAction(formData: FormData): Promise<void> {
 
 export async function logInAction(formData: FormData): Promise<void> {
   await attempt(async () => {
-    const user = await logIn(str(formData, "email"), str(formData, "password"));
+    const user = await logIn(str(formData, "email"), str(formData, "password"), await clientIp());
     await setSessionCookie(await createSession(user.id));
   }, "/login");
   redirect(safeNext(str(formData, "next")));
