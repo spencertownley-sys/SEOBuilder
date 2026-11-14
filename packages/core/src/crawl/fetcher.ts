@@ -3,7 +3,9 @@ import { lookup } from "node:dns/promises";
 import { isIP, type LookupFunction } from "node:net";
 import { Agent, EnvHttpProxyAgent, fetch, type Dispatcher } from "undici";
 
-export const USER_AGENT = "SEOBuilderBot/0.1 (+https://github.com/spencertownley-sys/SEOBuilder)";
+export const USER_AGENT = "MentionfulBot/0.1 (+https://mentionful.com/bot)";
+/** The crawler's name before the Mentionful rename. robots.txt groups written for it are still obeyed. */
+export const LEGACY_BOT_TOKEN = "SEOBuilderBot";
 
 export interface FetchOptions {
   timeoutMs?: number;

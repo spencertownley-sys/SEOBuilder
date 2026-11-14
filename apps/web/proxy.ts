@@ -7,6 +7,8 @@ import { NextResponse, type NextRequest } from "next/server";
 // host other than the page and its assets redirects to the app.
 const LANDING_HOSTS = new Set(["betterseobuilder.com"]);
 const APP_URL = process.env.APP_URL ?? "https://mentionful.com";
+const APP_HOST = new URL(APP_URL).hostname;
+const LANDING_URL = "https://betterseobuilder.com/";
 // Served by the landing host itself instead of redirecting to the app.
 const LANDING_LOCAL_PATHS = new Set(["/api/health", "/robots.txt", "/sitemap.xml", "/.well-known/security.txt", "/cookie-banner.js", "/cookie-banner.css"]);
 
@@ -24,7 +26,11 @@ export function proxy(req: NextRequest) {
   }
 
   const landing = process.env.SITE_MODE === "landing" || LANDING_HOSTS.has(host);
-  if (!landing) return NextResponse.next();
+  if (!landing) {
+    // The landing page lives on one host only (SB-12): duplicate copies split ranking signals.
+    if (pathname === "/better" && host === APP_HOST) return NextResponse.redirect(LANDING_URL, 308);
+    return NextResponse.next();
+  }
 
   if (pathname === "/") return NextResponse.rewrite(new URL("/better", req.url));
   if (pathname === "/better") return NextResponse.redirect(new URL("/", req.url), 308);

@@ -3,7 +3,7 @@ import { AuthForm } from "@/components/auth-form";
 import { currentUser } from "@/lib/session";
 import { signUpAction } from "@/app/actions";
 
-export const metadata = { title: "Sign up" };
+export const metadata = { title: "Sign up", alternates: { canonical: "/signup" } };
 
 export default async function SignupPage({ searchParams }: { searchParams: Promise<{ error?: string; notice?: string; next?: string }> }) {
   if (await currentUser()) redirect("/app");

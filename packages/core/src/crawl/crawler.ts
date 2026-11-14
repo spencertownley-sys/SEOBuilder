@@ -1,6 +1,6 @@
 import type { PageData, SiteData } from "../types.js";
 import { extractPage, extractSitemapUrls } from "./extract.js";
-import { politeFetch, USER_AGENT, type FetchOptions } from "./fetcher.js";
+import { LEGACY_BOT_TOKEN, politeFetch, USER_AGENT, type FetchOptions } from "./fetcher.js";
 import { aiBotAccess, isAllowed, parseRobots, type Robots } from "./robots.js";
 
 export interface CrawlOptions {
@@ -16,6 +16,11 @@ export interface CrawlOptions {
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** Our crawler may fetch a path only if neither its current name nor its old one is disallowed. */
+export function crawlerAllowed(robots: Robots, path: string): boolean {
+  return isAllowed(robots, USER_AGENT, path) && isAllowed(robots, LEGACY_BOT_TOKEN, path);
+}
 
 function normalize(url: string): string {
   const u = new URL(url);
@@ -97,7 +102,7 @@ export async function crawlSite(startUrl: string, opts: CrawlOptions = {}): Prom
         continue;
       }
       const path = new URL(item.url).pathname + new URL(item.url).search;
-      if (robotsFound && !isAllowed(robots, USER_AGENT, path)) continue;
+      if (robotsFound && !crawlerAllowed(robots, path)) continue;
       inflight++;
       try {
         await crawlOne(item);

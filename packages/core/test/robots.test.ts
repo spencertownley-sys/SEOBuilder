@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { crawlerAllowed } from "../src/crawl/crawler.js";
+import { USER_AGENT } from "../src/crawl/fetcher.js";
 import { aiBotAccess, isAllowed, matchRule, MAX_RULES_PER_GROUP, parseRobots } from "../src/crawl/robots.js";
 
 describe("robots", () => {
@@ -67,5 +69,12 @@ Sitemap: https://example.com/sitemap.xml
     expect(long.groups[0]!.rules.map((x) => x.pattern)).toEqual(["/short"]);
     const many = parseRobots("User-agent: *\n" + Array.from({ length: 800 }, (_, i) => `Disallow: /p${i}`).join("\n"));
     expect(many.groups[0]!.rules).toHaveLength(MAX_RULES_PER_GROUP);
+  });
+
+  it("identifies as MentionfulBot and still obeys rules written for SEOBuilderBot", () => {
+    expect(USER_AGENT).toMatch(/^MentionfulBot\/[\d.]+ \(\+https:\/\/mentionful\.com\/bot\)$/);
+    expect(crawlerAllowed(parseRobots("User-agent: MentionfulBot\nDisallow: /"), "/x")).toBe(false);
+    expect(crawlerAllowed(parseRobots("User-agent: SEOBuilderBot\nDisallow: /"), "/x")).toBe(false);
+    expect(crawlerAllowed(parseRobots("User-agent: GPTBot\nDisallow: /"), "/x")).toBe(true);
   });
 });

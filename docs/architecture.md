@@ -53,8 +53,9 @@ fetching without a browser *is* the AI-readiness test ("content readable without
 JavaScript"). Playwright workers come with the P1 "JavaScript rendering check", which compares
 rendered and raw text.
 
-**Crawler etiquette (PRD non-functional).** Identifies as `SEOBuilderBot`, obeys robots.txt for
-its own user agent, crawls same-host only, 4 workers with a 250 ms delay each by default,
+**Crawler etiquette (PRD non-functional).** Identifies as
+`MentionfulBot/0.1 (+https://mentionful.com/bot)` (it was `SEOBuilderBot` before the rename, and
+robots.txt groups for that name are still obeyed), obeys robots.txt for its own user agent, crawls same-host only, 4 workers with a 250 ms delay each by default,
 3 MB per page cap, 15 s timeout. External links get a HEAD check (GET fallback) and only
 404/410/5xx count as broken, because many sites answer bots with 403 while working for people.
 

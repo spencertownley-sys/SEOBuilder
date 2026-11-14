@@ -1,6 +1,9 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { Messages } from "@/components/messages";
 import { AuditForm } from "@/components/audit-form";
+
+export const metadata: Metadata = { alternates: { canonical: "/" } };
 
 export default async function Home({ searchParams }: { searchParams: Promise<{ error?: string }> }) {
   const { error } = await searchParams;

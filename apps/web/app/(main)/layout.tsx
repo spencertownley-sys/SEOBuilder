@@ -59,7 +59,7 @@ export default async function MainLayout({ children }: { children: React.ReactNo
           </Link>
         </nav>
         <p>
-          Mentionful · Scores and impact are estimates, not guarantees of rankings or AI citations. Our crawler identifies as SEOBuilderBot and obeys robots.txt.
+          Mentionful · Scores and impact are estimates, not guarantees of rankings or AI citations. Our crawler identifies as MentionfulBot (formerly SEOBuilderBot) and obeys robots.txt.
         </p>
       </footer>
     </>
