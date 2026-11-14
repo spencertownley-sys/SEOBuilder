@@ -3,6 +3,7 @@
 
 import { availableEngines } from "@seobuilder/core";
 import { one, q } from "./db.js";
+import { limits } from "./limits.js";
 
 export type JobKind = "public_audit" | "site_crawl" | "prompt_run" | "competitor_audit";
 
@@ -88,13 +89,31 @@ export async function scheduleDue(): Promise<void> {
   for (const s of due) await enqueue("site_crawl", { siteId: s.id, reason: "scheduled" });
 
   if (availableEngines().length) {
-    const prompts = await q<{ id: string }>(
-      `update sites set next_prompt_run_at = now() + interval '7 days'
-        where (next_prompt_run_at is null or next_prompt_run_at <= now())
-          and exists (select 1 from prompts p where p.site_id = sites.id and p.active)
-        returning id`,
+    // Paid AI calls: only for sites whose owner proved they own them, and never past the
+    // service-wide daily ceiling (queued scheduled runs count against it too).
+    const started = await one<{ n: number }>(
+      `select (select count(*)::int from prompt_runs where started_at > now() - interval '24 hours')
+            + (select count(*)::int from jobs where kind = 'prompt_run' and status = 'queued' and payload->>'promptRunId' is null) as n`,
     );
-    for (const s of prompts) await enqueue("prompt_run", { siteId: s.id });
+    const room = limits.promptRunsPerDay() - (started?.n ?? 0);
+    if (room <= 0) {
+      console.warn(`[jobs] daily prompt run ceiling (${limits.promptRunsPerDay()}) reached; weekly AI runs wait until tomorrow`);
+    } else {
+      const prompts = await q<{ id: string }>(
+        `update sites set next_prompt_run_at = now() + interval '7 days'
+          where id in (
+            select id from sites
+             where (next_prompt_run_at is null or next_prompt_run_at <= now())
+               and verified_at is not null
+               and exists (select 1 from prompts p where p.site_id = sites.id and p.active)
+             order by next_prompt_run_at nulls first
+             limit $1
+             for update skip locked)
+          returning id`,
+        [room],
+      );
+      for (const s of prompts) await enqueue("prompt_run", { siteId: s.id });
+    }
   }
 }
 

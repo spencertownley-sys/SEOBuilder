@@ -203,7 +203,10 @@ export async function suggestPromptsAction(siteId: string): Promise<void> {
 
 export async function runPromptsAction(siteId: string): Promise<void> {
   const user = await requireUser();
-  const id = await requestPromptRun(user.id, siteId);
+  let id: string | null = "";
+  await attempt(async () => {
+    id = await requestPromptRun(user.id, siteId);
+  }, `/app/sites/${siteId}/ai`);
   if (!id) redirect(withMessage(`/app/sites/${siteId}/ai`, "error", "No AI engines are connected yet. Add an API key (see below), then run again."));
   revalidatePath(`/app/sites/${siteId}/ai`);
 }

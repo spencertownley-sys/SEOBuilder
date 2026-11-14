@@ -166,6 +166,75 @@ describe("AI visibility runs", () => {
   });
 });
 
+/** Runs fn with some environment variables set, then restores them. */
+async function withEnv<T>(vars: Record<string, string>, fn: () => Promise<T>): Promise<T> {
+  const before = Object.fromEntries(Object.keys(vars).map((k) => [k, process.env[k]]));
+  Object.assign(process.env, vars);
+  try {
+    return await fn();
+  } finally {
+    for (const [k, v] of Object.entries(before)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  }
+}
+
+describe("fair-use limits (SB-02)", () => {
+  let carol: { id: string; email: string };
+  const carolSites: string[] = [];
+
+  beforeAll(async () => {
+    carol = await P.signUp("carol@example.com", "carol's long password");
+  });
+  afterAll(async () => {
+    await P.q("delete from jobs where payload->>'siteId' = any($1)", [carolSites]);
+    await P.q("delete from sites where id = any($1)", [carolSites]);
+  });
+
+  it("refuses a 4th site in one workspace", async () => {
+    for (const d of ["one.example", "two.example", "three.example"]) carolSites.push(await P.createSite(carol.id, { url: d }));
+    await expect(P.createSite(carol.id, { url: "four.example" })).rejects.toThrow(/up to 3 sites/);
+    expect(await P.listSites(carol.id)).toHaveLength(3);
+  });
+
+  it("returns the existing run inside the cooldown instead of queueing another", async () => {
+    await withEnv({ PERPLEXITY_API_KEY: "test-key" }, async () => {
+      const first = await P.requestPromptRun(carol.id, carolSites[0]!);
+      expect(first).toBeTruthy();
+      expect(await P.requestPromptRun(carol.id, carolSites[0]!)).toBe(first); // still running
+      await P.q("update prompt_runs set status = 'done', finished_at = now() where id = $1", [first]);
+      expect(await P.requestPromptRun(carol.id, carolSites[0]!)).toBe(first); // done, but within 24 hours
+      const runs = await P.q("select 1 from prompt_runs where site_id = $1", [carolSites[0]]);
+      expect(runs).toHaveLength(1);
+    });
+  });
+
+  it("caps prompt runs per workspace and across the service", async () => {
+    await withEnv({ PERPLEXITY_API_KEY: "test-key", PROMPT_RUN_COOLDOWN_HOURS: "0", MAX_PROMPT_RUNS_PER_WORKSPACE_PER_DAY: "1" }, async () => {
+      await expect(P.requestPromptRun(carol.id, carolSites[1]!)).rejects.toThrow(/AI tracking runs for today/);
+    });
+    await withEnv({ PERPLEXITY_API_KEY: "test-key", PROMPT_RUN_COOLDOWN_HOURS: "0", MAX_PROMPT_RUNS_PER_DAY: "1" }, async () => {
+      await expect(P.requestPromptRun(carol.id, carolSites[1]!)).rejects.toThrow(/daily limit/);
+    });
+    const runs = await P.q("select 1 from prompt_runs where site_id = $1", [carolSites[1]]);
+    expect(runs).toHaveLength(0);
+  });
+
+  it("schedules weekly AI runs only for verified sites", async () => {
+    const queuedRuns = async (id: string) => (await P.q("select 1 from jobs where kind = 'prompt_run' and status = 'queued' and payload->>'siteId' = $1 and payload->>'promptRunId' is null", [id])).length;
+    await withEnv({ PERPLEXITY_API_KEY: "test-key" }, async () => {
+      await P.scheduleDue();
+      expect(await queuedRuns(carolSites[2]!)).toBe(0);
+      await P.q("update sites set verified_at = now() where id = $1", [carolSites[2]]);
+      await P.scheduleDue();
+      expect(await queuedRuns(carolSites[2]!)).toBe(1);
+      await P.scheduleDue();
+      expect(await queuedRuns(carolSites[2]!)).toBe(1); // next_prompt_run_at moved a week out
+    });
+  });
+});
+
 describe("public audits", () => {
   it("rate-limits per requester and reuses fresh reports", async () => {
     const ids = new Set<string>();

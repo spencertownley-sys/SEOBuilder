@@ -3,6 +3,7 @@ import { politeFetch, suggestPrompts, type BrandProfile, type BusinessKind } fro
 import { primaryWorkspace } from "./auth.js";
 import { one, q, tx, type Db } from "./db.js";
 import { enqueue } from "./jobs.js";
+import { limits } from "./limits.js";
 
 export class NotFoundError extends Error {}
 export class InputError extends Error {}
@@ -105,6 +106,12 @@ export async function createSite(userId: string, input: NewSiteInput): Promise<s
   const businessType = input.businessType?.trim() ?? "";
 
   const siteId = await tx(async (c) => {
+    // Fair-use cap (each site brings weekly crawls and paid AI prompt runs). Lock the workspace
+    // row so two concurrent requests can't both slip under the limit.
+    await q("select id from workspaces where id = $1 for update", [workspaceId], c);
+    const max = limits.sitesPerWorkspace();
+    const count = await one<{ n: number }>("select count(*)::int as n from sites where workspace_id = $1", [workspaceId], c);
+    if ((count?.n ?? 0) >= max) throw new InputError(`You can track up to ${max} site${max === 1 ? "" : "s"}. Delete one to add another.`);
     const site = await one<{ id: string }>(
       `insert into sites (workspace_id, url, domain, name, business_kind, business_type, services, locations)
        values ($1, $2, $3, $4, $5, $6, $7, $8) on conflict (workspace_id, domain) do nothing returning id`,

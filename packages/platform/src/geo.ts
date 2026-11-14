@@ -1,6 +1,8 @@
 import { allEngines, availableEngines, trackVisibility, type Engine, type Intent, type TrackedPrompt } from "@seobuilder/core";
 import { one, q, tx } from "./db.js";
 import { enqueue } from "./jobs.js";
+import { limits } from "./limits.js";
+import { RateLimitError } from "./public.js";
 import { brandProfile, InputError, requireSite, seedPrompts } from "./sites.js";
 import { snapshotScores, syncTasks } from "./tasks.js";
 
@@ -52,12 +54,42 @@ export async function suggestMorePrompts(userId: string, siteId: string): Promis
   return seedPrompts(site.id, undefined, 50);
 }
 
-/** Queues a tracking run now. Returns null when no engine has an API key configured. */
+/** Prompt runs started across the whole service in the last 24 hours. */
+export async function promptRunsLastDay(): Promise<number> {
+  const row = await one<{ n: number }>("select count(*)::int as n from prompt_runs where started_at > now() - interval '24 hours'");
+  return row?.n ?? 0;
+}
+
+/**
+ * Queues a tracking run now. Returns null when no engine has an API key configured.
+ * Every run is up to MAX_PROMPTS_PER_RUN paid web-search calls per engine, so: a running or
+ * recent run is returned instead of starting another (cooldown), and both the workspace and the
+ * whole service have a daily ceiling.
+ */
 export async function requestPromptRun(userId: string, siteId: string): Promise<string | null> {
   const site = await requireSite(userId, siteId);
   if (!availableEngines().length) return null;
-  const pending = await one<{ id: string }>("select id from prompt_runs where site_id = $1 and status = 'running'", [site.id]);
+  const pending = await one<{ id: string }>("select id from prompt_runs where site_id = $1 and status = 'running' order by started_at desc limit 1", [site.id]);
   if (pending) return pending.id;
+  const recent = await one<{ id: string }>(
+    "select id from prompt_runs where site_id = $1 and started_at > now() - make_interval(hours => $2) order by started_at desc limit 1",
+    [site.id, limits.promptRunCooldownHours()],
+  );
+  if (recent) return recent.id;
+  const perWorkspace = limits.promptRunsPerWorkspacePerDay();
+  const ws = await one<{ n: number }>(
+    `select count(*)::int as n from prompt_runs r join sites s on s.id = r.site_id
+      where s.workspace_id = $1 and r.started_at > now() - interval '24 hours'`,
+    [site.workspace_id],
+  );
+  if ((ws?.n ?? 0) >= perWorkspace) {
+    throw new RateLimitError(`Your workspace has used its ${perWorkspace} AI tracking runs for today. Try again tomorrow.`);
+  }
+  const total = await promptRunsLastDay();
+  if (total >= limits.promptRunsPerDay()) {
+    console.warn(`[geo] daily prompt run ceiling reached (${total} in 24 h); refusing a manual run for site ${site.id}`);
+    throw new RateLimitError("AI tracking has reached its daily limit. Please try again tomorrow.");
+  }
   const run = await one<{ id: string }>("insert into prompt_runs (site_id, engines) values ($1, $2) returning id", [site.id, availableEngines().map((e) => e.id)]);
   await enqueue("prompt_run", { siteId: site.id, promptRunId: run!.id });
   return run!.id;
