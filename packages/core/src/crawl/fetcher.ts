@@ -1,6 +1,7 @@
 import { lookup as dnsLookup } from "node:dns";
 import { lookup } from "node:dns/promises";
 import { isIP, type LookupFunction } from "node:net";
+import ipaddr from "ipaddr.js";
 import { Agent, EnvHttpProxyAgent, fetch, type Dispatcher } from "undici";
 
 export const USER_AGENT = "MentionfulBot/0.1 (+https://mentionful.com/bot)";
@@ -26,34 +27,22 @@ export interface FetchResult {
   error?: string;
 }
 
+/**
+ * True for every address that is not ordinary public unicast: private, loopback, link-local,
+ * carrier-grade NAT, multicast, broadcast and all IANA special-purpose blocks (ipaddr.js
+ * range() other than "unicast"). That includes 192.0.0.0/24, 198.18.0.0/15, fec0::/10,
+ * ff00::/8, NAT64 (64:ff9b::/96) and 6to4 (2002::/16). IPv4-mapped IPv6 is unwrapped first.
+ * Anything that doesn't parse is refused.
+ */
 export function isPrivateAddress(ip: string): boolean {
-  if (isIP(ip) === 4) {
-    const [a, b] = ip.split(".").map(Number) as [number, number];
-    return (
-      a === 0 ||
-      a === 10 ||
-      a === 127 ||
-      (a === 100 && b >= 64 && b <= 127) ||
-      (a === 169 && b === 254) ||
-      (a === 172 && b >= 16 && b <= 31) ||
-      (a === 192 && b === 168) ||
-      a >= 224
-    );
-  }
-  const v6 = ip.toLowerCase();
-  if (v6.startsWith("::ffff:")) {
-    const rest = v6.slice(7);
-    if (isIP(rest) === 4) return isPrivateAddress(rest);
-    // Hex form, e.g. ::ffff:7f00:1 is 127.0.0.1.
-    const m = /^([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(rest);
-    if (m) {
-      const hi = parseInt(m[1]!, 16);
-      const lo = parseInt(m[2]!, 16);
-      return isPrivateAddress(`${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`);
-    }
+  let addr: ipaddr.IPv4 | ipaddr.IPv6;
+  try {
+    addr = ipaddr.parse(ip);
+  } catch {
     return true;
   }
-  return v6 === "::" || v6 === "::1" || v6.startsWith("fc") || v6.startsWith("fd") || v6.startsWith("fe80");
+  if (addr.kind() === "ipv6" && (addr as ipaddr.IPv6).isIPv4MappedAddress()) addr = (addr as ipaddr.IPv6).toIPv4Address();
+  return addr.range() !== "unicast";
 }
 
 export async function assertPublicHost(url: URL): Promise<void> {

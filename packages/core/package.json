@@ -23,6 +23,7 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.132.1",
     "cheerio": "^1.2.0",
+    "ipaddr.js": "^2.5.0",
     "undici": "^7.30.2"
   },
   "devDependencies": {
