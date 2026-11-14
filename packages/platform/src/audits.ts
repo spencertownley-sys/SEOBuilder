@@ -27,7 +27,8 @@ export async function crawlSavedSite(siteId: string, onProgress?: (msg: string) 
   try {
     result = await runAudit(site.url, {
       ...auditOptions(),
-      maxPages: SITE_PAGE_LIMIT,
+      // Until ownership is verified a saved site gets no more than a free audit would.
+      maxPages: site.verified_at ? SITE_PAGE_LIMIT : Math.min(SITE_PAGE_LIMIT, PUBLIC_PAGE_LIMIT),
       onProgress: (n, queued) => onProgress?.(`Crawled ${n} pages, ${queued} queued`),
     });
   } catch (e) {

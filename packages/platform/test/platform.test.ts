@@ -294,6 +294,18 @@ describe("fair-use limits (SB-02)", () => {
     expect(runs).toHaveLength(0);
   });
 
+  it("schedules weekly crawls only for verified sites (SB-10)", async () => {
+    const queuedCrawls = async (id: string) => (await P.q("select 1 from jobs where kind = 'site_crawl' and status = 'queued' and payload->>'siteId' = $1", [id])).length;
+    const id = carolSites[1]!;
+    await P.q("delete from jobs where payload->>'siteId' = $1", [id]); // the first crawl from createSite
+    await P.q("update sites set next_crawl_at = now() - interval '1 minute' where id = $1", [id]);
+    await P.scheduleDue();
+    expect(await queuedCrawls(id)).toBe(0);
+    await P.q("update sites set verified_at = now() where id = $1", [id]);
+    await P.scheduleDue();
+    expect(await queuedCrawls(id)).toBe(1);
+  });
+
   it("schedules weekly AI runs only for verified sites", async () => {
     const queuedRuns = async (id: string) => (await P.q("select 1 from jobs where kind = 'prompt_run' and status = 'queued' and payload->>'siteId' = $1 and payload->>'promptRunId' is null", [id])).length;
     await withEnv({ PERPLEXITY_API_KEY: "test-key" }, async () => {

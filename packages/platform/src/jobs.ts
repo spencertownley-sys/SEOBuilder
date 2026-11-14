@@ -82,9 +82,12 @@ async function runOne(job: JobRow, handlers: Record<JobKind, Handler>): Promise<
 export async function scheduleDue(): Promise<void> {
   await purgeAuthAttempts();
   // Bump next_crawl_at in the same statement so two schedulers can't both enqueue a site.
+  // Weekly crawls only for sites whose owner proved ownership (SB-10); others get the first crawl
+  // when they are added, and manual re-checks.
   const due = await q<{ id: string }>(
     `update sites set next_crawl_at = now() + interval '7 days'
       where next_crawl_at <= now()
+        and verified_at is not null
         and not exists (select 1 from jobs j where j.kind = 'site_crawl' and j.status in ('queued','running') and j.payload->>'siteId' = sites.id::text)
       returning id`,
   );

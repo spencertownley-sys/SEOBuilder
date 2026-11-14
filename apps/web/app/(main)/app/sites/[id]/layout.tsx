@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { NotFoundError, requireSite } from "@seobuilder/platform";
+import { NotFoundError, PUBLIC_PAGE_LIMIT, requireSite } from "@seobuilder/platform";
 import { requireUser } from "@/lib/session";
 import { SiteTabs } from "./tabs";
 
@@ -31,6 +31,15 @@ export default async function SiteLayout({ children, params }: { children: React
           {site.url}
         </a>
       </div>
+      {!site.verified_at && (
+        <p className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          Verify ownership to enable weekly tracking. Until then this site gets no weekly re-crawls or weekly AI runs, and crawls stop at{" "}
+          {PUBLIC_PAGE_LIMIT} pages.{" "}
+          <Link href={`/app/sites/${site.id}/settings#verify`} className="font-semibold underline">
+            Verify now
+          </Link>
+        </p>
+      )}
       <SiteTabs siteId={site.id} />
       {children}
     </div>
