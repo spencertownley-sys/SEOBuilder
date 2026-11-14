@@ -57,8 +57,7 @@ export default async function AiVisibility({ params, searchParams }: { params: P
         </ul>
         {connected.length === 0 && (
           <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900">
-            No AI engines are connected on this server yet. The operator adds API keys as environment variables ({engines.map((e) => e.envVar).join(", ")}); each engine with a key is tracked.
-            Your on-site AI readiness score works without them.
+            AI tracking is not configured on this server yet, so no assistants can be asked. Your on-site AI readiness score works without it.
           </p>
         )}
       </section>
@@ -69,7 +68,7 @@ export default async function AiVisibility({ params, searchParams }: { params: P
           Asking {latest!.run.engines.map((e) => ENGINE_NAME[e] ?? e).join(", ")}… started {timeAgo(latest!.run.started_at)}.
         </p>
       )}
-      {latest?.run.status === "failed" && <Messages error={`Last run failed: ${latest.run.error}`} />}
+      {latest?.run.status === "failed" && <Messages errorText="The last AI tracking run did not finish. The AI provider returned an error; try again later." />}
 
       {m && (
         <section className="space-y-4">
@@ -132,7 +131,7 @@ export default async function AiVisibility({ params, searchParams }: { params: P
                     “{a.prompt_text}” <span className="font-normal text-slate-500">· {ENGINE_NAME[a.engine] ?? a.engine}</span>
                   </p>
                   {a.error ? (
-                    <p className="text-rose-700">Failed: {a.error}</p>
+                    <p className="text-rose-700">No answer: the AI provider returned an error.</p>
                   ) : (
                     <>
                       <p className="mt-1 text-xs">

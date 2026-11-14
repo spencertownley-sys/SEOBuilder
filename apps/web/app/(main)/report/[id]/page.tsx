@@ -8,6 +8,21 @@ import { AuditForm } from "@/components/audit-form";
 
 const FREE_FIX_LIMIT = 10;
 
+/**
+ * A plain sentence for why an audit failed. The raw error (logged by the job runner) can hold
+ * internal detail, so only recognised cases are described and everything else is generic.
+ */
+function failureText(raw: string): string {
+  const http = /^HTTP (\d{3})$/.exec(raw.trim());
+  if (http) return `The site answered with HTTP status ${http[1]}`;
+  if (/robots\.txt unavailable/.test(raw)) return "The site's robots.txt could not be loaded, so we did not crawl it (crawlers must treat that as \"keep out\")";
+  if (/ENOTFOUND|EAI_AGAIN|getaddrinfo/i.test(raw)) return "We could not find that domain";
+  if (/Refusing to (fetch|connect)|private/i.test(raw)) return "That address is not a public website";
+  if (/timeout|timed out|aborted/i.test(raw)) return "The site took too long to answer";
+  if (/ECONNREFUSED|ECONNRESET|socket|certificate|SSL|TLS/i.test(raw)) return "We could not connect to the site";
+  return "We could not load the site";
+}
+
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
   const report = await getPublicReport((await params).id);
   const host = report ? new URL(report.url).host : "Site";
@@ -34,7 +49,7 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
 
   const done = report.state === "done" ? report : null;
   if (!done || done.result.error) {
-    const err = report.state === "failed" ? report.error : (done?.result.error ?? "The audit failed");
+    const err = failureText(report.state === "failed" ? report.error : (done?.result.error ?? ""));
     return (
       <div className="space-y-4">
         <h1 className="text-2xl font-bold">We couldn&apos;t audit {host}</h1>

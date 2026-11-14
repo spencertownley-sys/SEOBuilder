@@ -15,7 +15,13 @@ export interface User {
 
 export const TOKEN_MINUTES = 60;
 
-export class AuthError extends Error {}
+export class AuthError extends Error {
+  readonly code: string;
+  constructor(message: string, code = "auth_failed") {
+    super(message);
+    this.code = code;
+  }
+}
 
 const TOO_MANY = "Too many attempts. Try again in 15 minutes.";
 const NO_MATCH = "That email and password don't match.";
@@ -77,12 +83,12 @@ function normalizeEmail(email: string): string {
 /** `ip` is the client address for throttling; omit it for scripts and tests. */
 export async function signUp(emailRaw: string, password: string, ip?: string): Promise<User> {
   const email = normalizeEmail(emailRaw);
-  if (await authThrottled(email, ip)) throw new AuthError(TOO_MANY);
+  if (await authThrottled(email, ip)) throw new AuthError(TOO_MANY, "too_many_attempts");
   // Every signup counts against the IP, so one client can't mass-create accounts.
   if (ip) await recordAuthAttempt([ipKey(ip)]);
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254) throw new AuthError("Enter a valid email address.");
-  if (password.length < 8) throw new AuthError("Use a password of at least 8 characters.");
-  if (password.length > MAX_PASSWORD_LENGTH) throw new AuthError("That password is too long.");
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254) throw new AuthError("Enter a valid email address.", "invalid_email");
+  if (password.length < 8) throw new AuthError("Use a password of at least 8 characters.", "weak_password");
+  if (password.length > MAX_PASSWORD_LENGTH) throw new AuthError("That password is too long.", "long_password");
   const hash = await hashPassword(password);
   return tx(async (c) => {
     const user = await one<User>(
@@ -90,7 +96,7 @@ export async function signUp(emailRaw: string, password: string, ip?: string): P
       [email, hash],
       c,
     );
-    if (!user) throw new AuthError("An account with that email already exists. Log in instead.");
+    if (!user) throw new AuthError("An account with that email already exists. Log in instead.", "account_exists");
     const ws = await one<{ id: string }>("insert into workspaces (name) values ($1) returning id", [`${email.split("@")[0]}'s workspace`], c);
     await q("insert into workspace_members (workspace_id, user_id, role) values ($1, $2, 'owner')", [ws!.id, user.id], c);
     return user;
@@ -101,10 +107,10 @@ export async function logIn(emailRaw: string, password: string, ip?: string): Pr
   const email = normalizeEmail(emailRaw);
   // Checked before scrypt: once a key is throttled even the right password is refused until the
   // window passes, so guessing can't continue and floods don't cost CPU.
-  if (await authThrottled(email, ip)) throw new AuthError(TOO_MANY);
+  if (await authThrottled(email, ip)) throw new AuthError(TOO_MANY, "too_many_attempts");
   const failed = async () => {
     await recordAuthAttempt(ip ? [emailKey(email), ipKey(ip)] : [emailKey(email)]);
-    return new AuthError(NO_MATCH);
+    return new AuthError(NO_MATCH, "login_failed");
   };
   // No account can have a longer password (signup caps it), so don't spend scrypt on one.
   if (password.length > MAX_PASSWORD_LENGTH) throw await failed();
@@ -173,7 +179,7 @@ export async function startSignUp(emailRaw: string, password: string, ip?: strin
     const user = await signUp(emailRaw, password, ip);
     await sendVerification(user);
   } catch (e) {
-    if (!(e instanceof AuthError) || !e.message.includes("already exists")) throw e;
+    if (!(e instanceof AuthError) || e.code !== "account_exists") throw e;
     const email = normalizeEmail(emailRaw);
     await sendEmail({
       to: email,
@@ -192,7 +198,7 @@ export async function isEmailVerified(userId: string): Promise<boolean> {
 /** Throws unless the account's email is confirmed (when verification is switched on). */
 export async function requireVerifiedEmail(userId: string): Promise<void> {
   if (!emailVerificationRequired()) return;
-  if (!(await isEmailVerified(userId))) throw new AuthError("Confirm your email address first. Check your inbox for the link, or send a new one from your sites page.");
+  if (!(await isEmailVerified(userId))) throw new AuthError("Confirm your email address first. Check your inbox for the link, or send a new one from your sites page.", "verify_email_first");
 }
 
 /** Sends a fresh verification link, at most 3 times per 15 minutes. */
@@ -200,7 +206,7 @@ export async function resendVerification(userId: string): Promise<void> {
   const user = await one<User & { verified: boolean }>("select id, email, email_verified_at is not null as verified from users where id = $1", [userId]);
   if (!user || user.verified) return;
   const key = `verify:${user.id}`;
-  if ((await attemptsInWindow(key)) >= 3) throw new AuthError("Too many attempts. Try again in 15 minutes.");
+  if ((await attemptsInWindow(key)) >= 3) throw new AuthError(TOO_MANY, "too_many_attempts");
   await recordAuthAttempt([key]);
   await sendVerification({ id: user.id, email: user.email });
 }
@@ -208,9 +214,9 @@ export async function resendVerification(userId: string): Promise<void> {
 /** Confirms the email behind a verification link. Returns the user so the caller can sign them in. */
 export async function verifyEmail(token: string): Promise<User> {
   const userId = await consumeToken(token, "verify");
-  if (!userId) throw new AuthError("That link is invalid or has expired.");
+  if (!userId) throw new AuthError("That link is invalid or has expired.", "link_invalid");
   const user = await one<User>("update users set email_verified_at = coalesce(email_verified_at, now()) where id = $1 returning id, email", [userId]);
-  if (!user) throw new AuthError("That link is invalid or has expired.");
+  if (!user) throw new AuthError("That link is invalid or has expired.", "link_invalid");
   return user;
 }
 
@@ -233,16 +239,16 @@ export async function requestPasswordReset(emailRaw: string, ip?: string): Promi
 
 /** Sets a new password from a reset link (single use), signs out every session and confirms the email. */
 export async function resetPassword(token: string, password: string): Promise<User> {
-  if (password.length < 8) throw new AuthError("Use a password of at least 8 characters.");
-  if (password.length > MAX_PASSWORD_LENGTH) throw new AuthError("That password is too long.");
+  if (password.length < 8) throw new AuthError("Use a password of at least 8 characters.", "weak_password");
+  if (password.length > MAX_PASSWORD_LENGTH) throw new AuthError("That password is too long.", "long_password");
   const userId = await consumeToken(token, "reset");
-  if (!userId) throw new AuthError("That link is invalid or has expired. Ask for a new one.");
+  if (!userId) throw new AuthError("That link is invalid or has expired. Ask for a new one.", "reset_link_invalid");
   const hash = await hashPassword(password);
   const user = await one<User>(
     "update users set password_hash = $2, email_verified_at = coalesce(email_verified_at, now()) where id = $1 returning id, email",
     [userId, hash],
   );
-  if (!user) throw new AuthError("That link is invalid or has expired. Ask for a new one.");
+  if (!user) throw new AuthError("That link is invalid or has expired. Ask for a new one.", "reset_link_invalid");
   await destroyAllSessions(user.id);
   await clearAuthAttempts(emailKey(user.email));
   return user;

@@ -5,8 +5,21 @@ import { one, q, tx, type Db } from "./db.js";
 import { enqueue } from "./jobs.js";
 import { limits } from "./limits.js";
 
-export class NotFoundError extends Error {}
-export class InputError extends Error {}
+/** User-facing errors carry a stable code; the web app shows its own text for each code. */
+export class NotFoundError extends Error {
+  readonly code: string;
+  constructor(message: string, code = "not_found") {
+    super(message);
+    this.code = code;
+  }
+}
+export class InputError extends Error {
+  readonly code: string;
+  constructor(message: string, code = "input_invalid") {
+    super(message);
+    this.code = code;
+  }
+}
 
 export interface SiteRow {
   id: string;
@@ -44,10 +57,10 @@ export function normalizeSiteUrl(raw: string): URL {
   try {
     u = new URL(/^https?:\/\//i.test(s) ? s : `https://${s}`);
   } catch {
-    throw new InputError("That doesn't look like a website address.");
+    throw new InputError("That doesn't look like a website address.", "bad_url");
   }
   if ((u.protocol !== "http:" && u.protocol !== "https:") || !u.hostname.includes(".") || u.username || u.password) {
-    throw new InputError("That doesn't look like a website address.");
+    throw new InputError("That doesn't look like a website address.", "bad_url");
   }
   u.hash = "";
   return u;
@@ -112,14 +125,14 @@ export async function createSite(userId: string, input: NewSiteInput): Promise<s
     await q("select id from workspaces where id = $1 for update", [workspaceId], c);
     const max = limits.sitesPerWorkspace();
     const count = await one<{ n: number }>("select count(*)::int as n from sites where workspace_id = $1", [workspaceId], c);
-    if ((count?.n ?? 0) >= max) throw new InputError(`You can track up to ${max} site${max === 1 ? "" : "s"}. Delete one to add another.`);
+    if ((count?.n ?? 0) >= max) throw new InputError(`You can track up to ${max} site${max === 1 ? "" : "s"}. Delete one to add another.`, "site_limit");
     const site = await one<{ id: string }>(
       `insert into sites (workspace_id, url, domain, name, business_kind, business_type, services, locations)
        values ($1, $2, $3, $4, $5, $6, $7, $8) on conflict (workspace_id, domain) do nothing returning id`,
       [workspaceId, u.toString(), domain, name, kindOf(input.kind), businessType, services, locations],
       c,
     );
-    if (!site) throw new InputError(`You've already added ${domain}.`);
+    if (!site) throw new InputError(`You've already added ${domain}.`, "site_exists");
     for (const comp of competitors) {
       await q("insert into competitors (site_id, name, domain) values ($1, $2, $3)", [site.id, comp.name, comp.domain], c);
     }
@@ -218,9 +231,9 @@ export async function updateSiteProfile(
 
 export async function addCompetitor(userId: string, siteId: string, line: string): Promise<void> {
   const site = await requireSite(userId, siteId);
-  if (!line.trim()) throw new InputError("Enter a competitor name or website.");
+  if (!line.trim()) throw new InputError("Enter a competitor name or website.", "competitor_missing");
   const count = await one<{ n: number }>("select count(*)::int as n from competitors where site_id = $1", [site.id]);
-  if ((count?.n ?? 0) >= 5) throw new InputError("You can compare up to 5 competitors.");
+  if ((count?.n ?? 0) >= 5) throw new InputError("You can compare up to 5 competitors.", "competitor_limit");
   const comp = parseCompetitor(line);
   const row = await one<{ id: string }>("insert into competitors (site_id, name, domain) values ($1, $2, $3) returning id", [site.id, comp.name, comp.domain]);
   if (comp.domain) await enqueue("competitor_audit", { competitorId: row!.id });

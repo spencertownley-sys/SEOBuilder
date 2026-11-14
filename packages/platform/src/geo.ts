@@ -33,10 +33,10 @@ export async function listPrompts(userId: string, siteId: string): Promise<Promp
 export async function addPrompt(userId: string, siteId: string, text: string, intent: string): Promise<void> {
   const site = await requireSite(userId, siteId);
   const t = text.trim();
-  if (t.length < 3 || t.length > 300) throw new InputError("Prompts should be 3–300 characters.");
-  if (!INTENTS.includes(intent as Intent)) throw new InputError("Pick an intent.");
+  if (t.length < 3 || t.length > 300) throw new InputError("Prompts should be 3 to 300 characters.", "prompt_length");
+  if (!INTENTS.includes(intent as Intent)) throw new InputError("Pick an intent.", "prompt_intent");
   const n = await one<{ n: number }>("select count(*)::int as n from prompts where site_id = $1", [site.id]);
-  if ((n?.n ?? 0) >= 100) throw new InputError("A site can have up to 100 prompts.");
+  if ((n?.n ?? 0) >= 100) throw new InputError("A site can have up to 100 prompts.", "prompt_limit");
   await q("insert into prompts (site_id, text, intent) values ($1, $2, $3) on conflict (site_id, text) do update set active = true", [site.id, t, intent]);
 }
 
@@ -85,12 +85,12 @@ export async function requestPromptRun(userId: string, siteId: string): Promise<
     [site.workspace_id],
   );
   if ((ws?.n ?? 0) >= perWorkspace) {
-    throw new RateLimitError(`Your workspace has used its ${perWorkspace} AI tracking runs for today. Try again tomorrow.`);
+    throw new RateLimitError(`Your workspace has used its ${perWorkspace} AI tracking runs for today. Try again tomorrow.`, "workspace_ai_limit");
   }
   const total = await promptRunsLastDay();
   if (total >= limits.promptRunsPerDay()) {
     console.warn(`[geo] daily prompt run ceiling reached (${total} in 24 h); refusing a manual run for site ${site.id}`);
-    throw new RateLimitError("AI tracking has reached its daily limit. Please try again tomorrow.");
+    throw new RateLimitError("AI tracking has reached its daily limit. Please try again tomorrow.", "ai_daily_limit");
   }
   const run = await one<{ id: string }>("insert into prompt_runs (site_id, engines) values ($1, $2) returning id", [site.id, availableEngines().map((e) => e.id)]);
   await enqueue("prompt_run", { siteId: site.id, promptRunId: run!.id });

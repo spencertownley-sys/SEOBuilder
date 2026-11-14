@@ -15,8 +15,3 @@ function timeUntilText(s: number): string {
 }
 
 export const pct = (x: number | undefined | null) => (x === undefined || x === null ? "—" : `${Math.round(x * 100)}%`);
-
-export function withMessage(path: string, kind: "error" | "notice", msg: string): string {
-  const sep = path.includes("?") ? "&" : "?";
-  return `${path}${sep}${kind}=${encodeURIComponent(msg)}`;
-}
