@@ -59,7 +59,7 @@ export default async function MainLayout({ children }: { children: React.ReactNo
         </div>
       </header>
       <main className="mx-auto max-w-5xl px-4 py-10">{children}</main>
-      <footer className="mx-auto max-w-5xl space-y-3 px-4 pb-10 text-xs text-slate-400">
+      <footer className="mx-auto max-w-5xl space-y-3 px-4 pb-10 text-xs text-slate-600">
         <nav aria-label="Legal" className="flex flex-wrap gap-x-4 gap-y-2">
           <Link href="/privacy" className="underline hover:text-ink">
             Privacy
