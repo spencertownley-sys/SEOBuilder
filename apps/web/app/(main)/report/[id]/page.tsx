@@ -15,11 +15,12 @@ const FREE_FIX_LIMIT = 10;
 function failureText(raw: string): string {
   const http = /^HTTP (\d{3})$/.exec(raw.trim());
   if (http) return `The site answered with HTTP status ${http[1]}`;
-  if (/robots\.txt unavailable/.test(raw)) return "The site's robots.txt could not be loaded, so we did not crawl it (crawlers must treat that as \"keep out\")";
+  // Network causes first: when the site can't be reached at all, robots.txt fails too.
   if (/ENOTFOUND|EAI_AGAIN|getaddrinfo/i.test(raw)) return "We could not find that domain";
   if (/Refusing to (fetch|connect)|private/i.test(raw)) return "That address is not a public website";
   if (/timeout|timed out|aborted/i.test(raw)) return "The site took too long to answer";
   if (/ECONNREFUSED|ECONNRESET|socket|certificate|SSL|TLS/i.test(raw)) return "We could not connect to the site";
+  if (/robots\.txt unavailable/.test(raw)) return "The site's robots.txt answered with a server error, so we did not crawl it (crawlers must treat that as \"keep out\")";
   return "We could not load the site";
 }
 
