@@ -1,6 +1,6 @@
 import { resolveTxt } from "node:dns/promises";
 import { politeFetch, suggestPrompts, type BrandProfile, type BusinessKind } from "@seobuilder/core";
-import { primaryWorkspace } from "./auth.js";
+import { primaryWorkspace, requireVerifiedEmail } from "./auth.js";
 import { one, q, tx, type Db } from "./db.js";
 import { enqueue } from "./jobs.js";
 import { limits } from "./limits.js";
@@ -98,6 +98,7 @@ export function parseCompetitor(line: string): { name: string; domain: string | 
 export async function createSite(userId: string, input: NewSiteInput): Promise<string> {
   const u = normalizeSiteUrl(input.url);
   const domain = domainOf(u);
+  await requireVerifiedEmail(userId);
   const workspaceId = await primaryWorkspace(userId);
   const name = input.name?.trim() || domain;
   const services = list(input.services);

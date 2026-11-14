@@ -81,6 +81,55 @@ describe("login throttling (SB-05)", () => {
   });
 });
 
+describe("email verification and password reset (SB-06)", () => {
+  const sent: { to: string; subject: string; text: string }[] = [];
+  const tokenIn = (text: string, path: string) => new RegExp(`/${path}\\?token=([A-Za-z0-9_-]+)`).exec(text)?.[1] ?? "";
+  beforeAll(() => P.setMailer(async (m) => void sent.push(m)));
+  afterAll(() => P.setMailer(undefined));
+
+  it("answers new and existing emails the same way", async () => {
+    expect(P.emailVerificationRequired()).toBe(true);
+    expect(await P.startSignUp("erin@example.com", "erin's long password")).toEqual({ user: null });
+    expect(await P.startSignUp("Alice@example.com", "some other password")).toEqual({ user: null });
+    expect(sent.map((m) => m.to)).toEqual(["erin@example.com", "alice@example.com"]);
+    expect(tokenIn(sent[0]!.text, "verify")).not.toBe("");
+    expect(sent[1]!.text).not.toMatch(/token=/);
+    await expect(P.startSignUp("frank@example.com", "short")).rejects.toThrow(/at least 8/);
+  });
+
+  it("blocks site creation until the email is confirmed, and links work once", async () => {
+    const erin = (await P.q<{ id: string }>("select id from users where email = 'erin@example.com'"))[0]!;
+    await expect(P.createSite(erin.id, { url: "erin.example" })).rejects.toThrow(/Confirm your email/);
+    const token = tokenIn(sent[0]!.text, "verify");
+    expect((await P.verifyEmail(token)).id).toBe(erin.id);
+    await expect(P.verifyEmail(token)).rejects.toThrow(/invalid or has expired/);
+    await P.requireVerifiedEmail(erin.id);
+  });
+
+  it("resets a password once, signs out other sessions and keeps unknown emails silent", async () => {
+    const erin = (await P.q<{ id: string }>("select id from users where email = 'erin@example.com'"))[0]!;
+    const session = await P.createSession(erin.id);
+    sent.length = 0;
+    await P.requestPasswordReset("nobody-here@example.com");
+    expect(sent).toHaveLength(0);
+    await P.requestPasswordReset("ERIN@example.com");
+    const token = tokenIn(sent[0]!.text, "reset");
+    await expect(P.resetPassword(token, "short")).rejects.toThrow(/at least 8/);
+    await P.resetPassword(token, "a brand new password");
+    await expect(P.resetPassword(token, "another new password")).rejects.toThrow(/invalid or has expired/);
+    expect(await P.userFromSession(session)).toBeNull();
+    expect((await P.logIn("erin@example.com", "a brand new password")).id).toBe(erin.id);
+    await expect(P.logIn("erin@example.com", "erin's long password")).rejects.toThrow(/don't match/);
+  });
+
+  it("expires links after 60 minutes", async () => {
+    sent.length = 0;
+    await P.requestPasswordReset("erin@example.com");
+    await P.q("update auth_tokens set expires_at = now() - interval '1 minute' where purpose = 'reset'");
+    await expect(P.resetPassword(tokenIn(sent[0]!.text, "reset"), "yet another password")).rejects.toThrow(/invalid or has expired/);
+  });
+});
+
 describe("sites", () => {
   it("creates a site with seeded prompts and a queued crawl", async () => {
     siteId = await P.createSite(alice.id, {

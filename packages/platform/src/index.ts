@@ -13,6 +13,8 @@ export * from "./jobs.js";
 export * from "./public.js";
 export * from "./ratelimit.js";
 export * from "./limits.js";
+export * from "./mail.js";
+export * from "./startup.js";
 
 export const HANDLERS: Record<JobKind, Handler> = {
   public_audit: (job, progress) => runPublicAudit(job.payload.url!, progress),

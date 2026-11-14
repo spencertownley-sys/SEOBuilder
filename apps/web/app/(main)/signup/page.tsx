@@ -5,8 +5,8 @@ import { signUpAction } from "@/app/actions";
 
 export const metadata = { title: "Sign up" };
 
-export default async function SignupPage({ searchParams }: { searchParams: Promise<{ error?: string; next?: string }> }) {
+export default async function SignupPage({ searchParams }: { searchParams: Promise<{ error?: string; notice?: string; next?: string }> }) {
   if (await currentUser()) redirect("/app");
-  const { error, next } = await searchParams;
-  return <AuthForm mode="signup" action={signUpAction} error={error} next={next ?? "/app/new"} />;
+  const { error, notice, next } = await searchParams;
+  return <AuthForm mode="signup" action={signUpAction} error={error} notice={notice} next={next ?? "/app/new"} />;
 }

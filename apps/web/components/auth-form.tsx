@@ -2,12 +2,12 @@ import Link from "next/link";
 import { Messages } from "./messages";
 import { SubmitButton } from "./submit-button";
 
-export function AuthForm({ mode, action, error, next }: { mode: "login" | "signup"; action: (f: FormData) => Promise<void>; error?: string; next?: string }) {
+export function AuthForm({ mode, action, error, notice, next }: { mode: "login" | "signup"; action: (f: FormData) => Promise<void>; error?: string; notice?: string; next?: string }) {
   const signup = mode === "signup";
   return (
     <div className="mx-auto max-w-sm space-y-6">
       <h1 className="text-2xl font-bold">{signup ? "Create your free account" : "Log in"}</h1>
-      <Messages error={error} />
+      <Messages error={error} notice={notice} />
       <form action={action} className="space-y-4">
         <input type="hidden" name="next" value={next ?? "/app"} />
         <label className="block space-y-1">
@@ -25,6 +25,11 @@ export function AuthForm({ mode, action, error, next }: { mode: "login" | "signu
             className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2"
           />
           {signup && <span className="text-xs text-slate-500">At least 8 characters.</span>}
+          {!signup && (
+            <Link href="/forgot" className="block text-xs font-medium text-accent">
+              Forgot your password?
+            </Link>
+          )}
         </label>
         <SubmitButton className="w-full py-2.5" pending={signup ? "Creating account…" : "Logging in…"}>
           {signup ? "Create account" : "Log in"}

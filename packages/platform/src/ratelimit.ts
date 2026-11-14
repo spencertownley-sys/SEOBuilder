@@ -11,7 +11,7 @@ export const MAX_AUTH_ATTEMPTS_PER_IP = 30;
 export const emailKey = (email: string) => `email:${email}`;
 export const ipKey = (ip: string) => `ip:${hashRequester(ip)}`;
 
-async function recent(key: string): Promise<number> {
+export async function attemptsInWindow(key: string): Promise<number> {
   const row = await one<{ n: number }>(
     "select count(*)::int as n from auth_attempts where key = $1 and created_at > now() - make_interval(mins => $2)",
     [key, AUTH_WINDOW_MINUTES],
@@ -21,8 +21,8 @@ async function recent(key: string): Promise<number> {
 
 /** True when either key has used up its attempts in the current window. */
 export async function authThrottled(email: string, ip?: string): Promise<boolean> {
-  if ((await recent(emailKey(email))) >= MAX_AUTH_ATTEMPTS_PER_EMAIL) return true;
-  return !!ip && (await recent(ipKey(ip))) >= MAX_AUTH_ATTEMPTS_PER_IP;
+  if ((await attemptsInWindow(emailKey(email))) >= MAX_AUTH_ATTEMPTS_PER_EMAIL) return true;
+  return !!ip && (await attemptsInWindow(ipKey(ip))) >= MAX_AUTH_ATTEMPTS_PER_IP;
 }
 
 export async function recordAuthAttempt(keys: string[]): Promise<void> {

@@ -49,6 +49,11 @@ export default function PrivacyPage() {
             ["Anthropic", "Answers tracked prompts (Claude with web search); receives prompts naming the business and its city", "United States"],
             ["Google", "Gemini answers tracked prompts; PageSpeed Insights receives audited URLs", "United States"],
             ["Perplexity", "Answers tracked prompts; receives prompts naming the business and its city", "United States"],
+            [
+              <Placeholder key="mail">email provider, for example Resend</Placeholder>,
+              "Sends account emails (email confirmation and password reset); receives your email address",
+              <Placeholder key="mail-where">email provider location</Placeholder>,
+            ],
           ]}
         />
         <p>Your browser also contacts these companies directly when you use the site:</p>

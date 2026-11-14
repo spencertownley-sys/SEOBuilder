@@ -1,4 +1,5 @@
 import { allEngines, availableEngines, trackVisibility, type Engine, type Intent, type TrackedPrompt } from "@seobuilder/core";
+import { requireVerifiedEmail } from "./auth.js";
 import { one, q, tx } from "./db.js";
 import { enqueue } from "./jobs.js";
 import { limits } from "./limits.js";
@@ -69,6 +70,7 @@ export async function promptRunsLastDay(): Promise<number> {
 export async function requestPromptRun(userId: string, siteId: string): Promise<string | null> {
   const site = await requireSite(userId, siteId);
   if (!availableEngines().length) return null;
+  await requireVerifiedEmail(userId);
   const pending = await one<{ id: string }>("select id from prompt_runs where site_id = $1 and status = 'running' order by started_at desc limit 1", [site.id]);
   if (pending) return pending.id;
   const recent = await one<{ id: string }>(

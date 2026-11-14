@@ -19,14 +19,18 @@ import {
   one,
   RateLimitError,
   removeCompetitor,
+  requestPasswordReset,
   requestPromptRun,
   requestPublicAudit,
   requireSite,
+  resendVerification,
+  resetPassword,
   setPromptActive,
   setTaskStatus,
-  signUp,
+  startSignUp,
   suggestMorePrompts,
   updateSiteProfile,
+  verifyEmail,
   verifySite,
 } from "@seobuilder/platform";
 import type { TaskStatus } from "@seobuilder/core";
@@ -69,11 +73,46 @@ function safeNext(next: string): string {
 }
 
 export async function signUpAction(formData: FormData): Promise<void> {
+  let signedIn = false;
   await attempt(async () => {
-    const user = await signUp(str(formData, "email"), str(formData, "password"), await clientIp());
-    await setSessionCookie(await createSession(user.id));
+    const { user } = await startSignUp(str(formData, "email"), str(formData, "password"), await clientIp());
+    if (user) {
+      await setSessionCookie(await createSession(user.id));
+      signedIn = true;
+    }
   }, "/signup");
+  // With email verification on, new and existing addresses get the same answer (SB-06).
+  if (!signedIn) redirect(withMessage("/signup", "notice", "Check your email to finish signing up."));
   redirect(safeNext(str(formData, "next")));
+}
+
+export async function verifyEmailAction(formData: FormData): Promise<void> {
+  await attempt(async () => {
+    const user = await verifyEmail(str(formData, "token"));
+    await setSessionCookie(await createSession(user.id));
+  }, "/login");
+  redirect(withMessage("/app/new", "notice", "Email confirmed. Add your first site."));
+}
+
+export async function resendVerificationAction(): Promise<void> {
+  const user = await requireUser();
+  await attempt(() => resendVerification(user.id), "/app");
+  redirect(withMessage("/app", "notice", `We sent a new confirmation link to ${user.email}.`));
+}
+
+export async function forgotPasswordAction(formData: FormData): Promise<void> {
+  const ip = await clientIp();
+  await attempt(() => requestPasswordReset(str(formData, "email"), ip), "/forgot");
+  redirect(withMessage("/forgot", "notice", "If that email has an account, a reset link is on its way. It expires in 60 minutes."));
+}
+
+export async function resetPasswordAction(formData: FormData): Promise<void> {
+  const token = str(formData, "token");
+  await attempt(async () => {
+    const user = await resetPassword(token, str(formData, "password"));
+    await setSessionCookie(await createSession(user.id));
+  }, `/reset?token=${encodeURIComponent(token)}`);
+  redirect(withMessage("/app", "notice", "Your password is changed and other devices are signed out."));
 }
 
 export async function logInAction(formData: FormData): Promise<void> {
