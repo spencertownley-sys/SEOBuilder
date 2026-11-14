@@ -5,6 +5,10 @@
   --ss-progress: 0;
   position: relative;
   isolation: isolate;
+  /* The copy's glow (.scroll-scrub__copy::before, inset -5rem / -2rem) reaches past the
+     viewport edge and made the page scroll sideways. clip, unlike hidden, keeps the sticky
+     stage working because it doesn't create a scroll container. */
+  overflow-x: clip;
   color: var(--ss-ink);
   background: var(--ss-bg);
 }
