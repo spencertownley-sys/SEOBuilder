@@ -3,6 +3,7 @@
 
 import { availableEngines } from "@seobuilder/core";
 import { one, q } from "./db.js";
+import { purgeExpiredSessions } from "./auth.js";
 import { limits } from "./limits.js";
 import { purgeAuthAttempts } from "./ratelimit.js";
 
@@ -81,6 +82,7 @@ async function runOne(job: JobRow, handlers: Record<JobKind, Handler>): Promise<
 /** Enqueues weekly re-crawls and AI prompt runs that are due. */
 export async function scheduleDue(): Promise<void> {
   await purgeAuthAttempts();
+  await purgeExpiredSessions();
   // Bump next_crawl_at in the same statement so two schedulers can't both enqueue a site.
   // Weekly crawls only for sites whose owner proved ownership (SB-10); others get the first crawl
   // when they are added, and manual re-checks.

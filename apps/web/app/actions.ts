@@ -11,6 +11,7 @@ import {
   createSite,
   deletePrompt,
   deleteSite,
+  destroyAllSessions,
   destroySession,
   enqueue,
   InputError,
@@ -128,6 +129,13 @@ export async function logOutAction(): Promise<void> {
   await destroySession(jar.get(SESSION_COOKIE)?.value);
   jar.delete(SESSION_COOKIE);
   redirect("/");
+}
+
+export async function logOutEverywhereAction(): Promise<void> {
+  const user = await requireUser();
+  await destroyAllSessions(user.id);
+  (await cookies()).delete(SESSION_COOKIE);
+  redirect(withMessage("/login", "notice", "You are logged out of all devices."));
 }
 
 // ---------- sites ----------

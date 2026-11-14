@@ -57,6 +57,43 @@ describe("auth", () => {
   });
 });
 
+describe("password hashing and sessions (SB-14)", () => {
+  it("hashes with OWASP scrypt parameters and upgrades old hashes on login", async () => {
+    expect(await P.hashPassword("x")).toMatch(/^scrypt\$N=131072,r=8,p=1\$[^$]+\$[^$]+$/);
+    const { randomBytes, scryptSync } = await import("node:crypto");
+    const salt = randomBytes(16);
+    const legacy = `scrypt$${salt.toString("base64")}$${scryptSync("grace's old password", salt, 64).toString("base64")}`;
+    const grace = await P.signUp("grace@example.com", "placeholder password");
+    await P.q("update users set password_hash = $2 where id = $1", [grace.id, legacy]);
+    expect(await P.verifyPassword("grace's old password", legacy)).toBe(true);
+    expect(P.needsRehash(legacy)).toBe(true);
+    expect((await P.logIn("grace@example.com", "grace's old password")).id).toBe(grace.id);
+    const [row] = await P.q<{ password_hash: string }>("select password_hash from users where id = $1", [grace.id]);
+    expect(row!.password_hash).toMatch(/^scrypt\$N=131072/);
+    expect(P.needsRehash(row!.password_hash)).toBe(false);
+    expect((await P.logIn("grace@example.com", "grace's old password")).id).toBe(grace.id);
+  });
+
+  it("refuses over-long passwords at login without hashing them", async () => {
+    await expect(P.logIn("alice@example.com", "x".repeat(201))).rejects.toThrow(/don't match/);
+    await P.q("delete from auth_attempts where key = $1", [P.emailKey("alice@example.com")]);
+  });
+
+  it("logs out of every device and purges expired sessions", async () => {
+    const a = await P.createSession(alice.id);
+    const b = await P.createSession(alice.id);
+    const other = await P.createSession(bob.id);
+    await P.destroyAllSessions(alice.id);
+    expect(await P.userFromSession(a)).toBeNull();
+    expect(await P.userFromSession(b)).toBeNull();
+    expect(await P.q("select 1 from sessions where user_id = $1", [alice.id])).toHaveLength(0);
+    expect((await P.userFromSession(other))?.id).toBe(bob.id);
+    await P.q("update sessions set expires_at = now() - interval '1 day' where user_id = $1", [bob.id]);
+    await P.purgeExpiredSessions();
+    expect(await P.q("select 1 from sessions where user_id = $1", [bob.id])).toHaveLength(0);
+  });
+});
+
 describe("login throttling (SB-05)", () => {
   it("locks an email after 10 failed logins, even for the right password", async () => {
     await P.signUp("dave@example.com", "dave's long password");

@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { logOutAction } from "@/app/actions";
+import { logOutAction, logOutEverywhereAction } from "@/app/actions";
 import { currentUser } from "@/lib/session";
 
 export const metadata: Metadata = {
@@ -29,6 +29,11 @@ export default async function MainLayout({ children }: { children: React.ReactNo
                 <form action={logOutAction}>
                   <button type="submit" className="text-slate-600 hover:text-ink">
                     Log out
+                  </button>
+                </form>
+                <form action={logOutEverywhereAction} className="hidden sm:block">
+                  <button type="submit" className="text-slate-500 hover:text-ink">
+                    Log out of all devices
                   </button>
                 </form>
               </>

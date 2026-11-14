@@ -1,10 +1,10 @@
-import { createHash, randomBytes, scrypt as scryptCb, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes, scrypt as scryptCb, timingSafeEqual, type ScryptOptions } from "node:crypto";
 import { promisify } from "node:util";
 import { one, q, tx } from "./db.js";
 import { appUrl, mailConfigured, sendEmail } from "./mail.js";
 import { attemptsInWindow, authThrottled, clearAuthAttempts, emailKey, ipKey, MAX_AUTH_ATTEMPTS_PER_IP, recordAuthAttempt } from "./ratelimit.js";
 
-const scrypt = promisify(scryptCb) as (pw: string, salt: Buffer, len: number) => Promise<Buffer>;
+const scrypt = promisify(scryptCb) as (pw: string, salt: Buffer, len: number, opts?: ScryptOptions) => Promise<Buffer>;
 
 export const SESSION_DAYS = 30;
 
@@ -18,23 +18,57 @@ export const TOKEN_MINUTES = 60;
 export class AuthError extends Error {}
 
 const TOO_MANY = "Too many attempts. Try again in 15 minutes.";
+const NO_MATCH = "That email and password don't match.";
+export const MAX_PASSWORD_LENGTH = 200;
 
+// OWASP's scrypt guidance (N=2^17, r=8, p=1). Needs 128 MiB per hash, so maxmem is raised.
+const SCRYPT = { N: 131072, r: 8, p: 1 } as const;
+const MAXMEM = 256 * 1024 * 1024;
+const PARAMS = `N=${SCRYPT.N},r=${SCRYPT.r},p=${SCRYPT.p}`;
+
+/** Stored as scrypt$N=131072,r=8,p=1$salt$hash (base64). */
 export async function hashPassword(password: string): Promise<string> {
   const salt = randomBytes(16);
-  const hash = await scrypt(password, salt, 64);
-  return `scrypt$${salt.toString("base64")}$${hash.toString("base64")}`;
+  const hash = await scrypt(password, salt, 64, { ...SCRYPT, maxmem: MAXMEM });
+  return `scrypt$${PARAMS}$${salt.toString("base64")}$${hash.toString("base64")}`;
+}
+
+/** Reads both the current format and the original scrypt$salt$hash one (Node defaults, N=16384). */
+function parseHash(stored: string): { opts: ScryptOptions; salt: Buffer; hash: Buffer; current: boolean } | null {
+  const parts = stored.split("$");
+  if (parts[0] !== "scrypt") return null;
+  if (parts.length === 3 && parts[1] && parts[2]) {
+    return { opts: {}, salt: Buffer.from(parts[1], "base64"), hash: Buffer.from(parts[2], "base64"), current: false };
+  }
+  if (parts.length !== 4 || !parts[1] || !parts[2] || !parts[3]) return null;
+  const p = Object.fromEntries(parts[1].split(",").map((kv) => kv.split("=")).map(([k, v]) => [k, Number(v)]));
+  const N = p.N ?? 0;
+  const r = p.r ?? 0;
+  const par = p.p ?? 0;
+  // Refuse absurd parameters from a tampered row rather than burning memory on them.
+  if (!(N >= 2 && N <= 2 ** 20 && (N & (N - 1)) === 0 && r >= 1 && r <= 32 && par >= 1 && par <= 16)) return null;
+  return {
+    opts: { N, r, p: par, maxmem: MAXMEM },
+    salt: Buffer.from(parts[2], "base64"),
+    hash: Buffer.from(parts[3], "base64"),
+    current: parts[1] === PARAMS,
+  };
 }
 
 export async function verifyPassword(password: string, stored: string): Promise<boolean> {
-  const [scheme, salt, hash] = stored.split("$");
-  if (scheme !== "scrypt" || !salt || !hash) return false;
-  const expected = Buffer.from(hash, "base64");
-  const actual = await scrypt(password, Buffer.from(salt, "base64"), expected.length);
-  return timingSafeEqual(actual, expected);
+  const parsed = parseHash(stored);
+  if (!parsed || !parsed.hash.length) return false;
+  const actual = await scrypt(password, parsed.salt, parsed.hash.length, parsed.opts);
+  return timingSafeEqual(actual, parsed.hash);
+}
+
+/** True when a stored hash uses older parameters and should be replaced after a good login. */
+export function needsRehash(stored: string): boolean {
+  return !parseHash(stored)?.current;
 }
 
 // Spends the same scrypt work on unknown emails so response time doesn't reveal which emails exist.
-const DUMMY_HASH = "scrypt$AAAAAAAAAAAAAAAAAAAAAA==$" + Buffer.alloc(64).toString("base64");
+const DUMMY_HASH = `scrypt$${PARAMS}$AAAAAAAAAAAAAAAAAAAAAA==$` + Buffer.alloc(64).toString("base64");
 
 function normalizeEmail(email: string): string {
   return email.trim().toLowerCase();
@@ -48,7 +82,7 @@ export async function signUp(emailRaw: string, password: string, ip?: string): P
   if (ip) await recordAuthAttempt([ipKey(ip)]);
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254) throw new AuthError("Enter a valid email address.");
   if (password.length < 8) throw new AuthError("Use a password of at least 8 characters.");
-  if (password.length > 200) throw new AuthError("That password is too long.");
+  if (password.length > MAX_PASSWORD_LENGTH) throw new AuthError("That password is too long.");
   const hash = await hashPassword(password);
   return tx(async (c) => {
     const user = await one<User>(
@@ -68,13 +102,18 @@ export async function logIn(emailRaw: string, password: string, ip?: string): Pr
   // Checked before scrypt: once a key is throttled even the right password is refused until the
   // window passes, so guessing can't continue and floods don't cost CPU.
   if (await authThrottled(email, ip)) throw new AuthError(TOO_MANY);
+  const failed = async () => {
+    await recordAuthAttempt(ip ? [emailKey(email), ipKey(ip)] : [emailKey(email)]);
+    return new AuthError(NO_MATCH);
+  };
+  // No account can have a longer password (signup caps it), so don't spend scrypt on one.
+  if (password.length > MAX_PASSWORD_LENGTH) throw await failed();
   const row = await one<User & { password_hash: string }>("select id, email, password_hash from users where email = $1", [email]);
   const ok = await verifyPassword(password, row?.password_hash ?? DUMMY_HASH);
-  if (!row || !ok) {
-    await recordAuthAttempt(ip ? [emailKey(email), ipKey(ip)] : [emailKey(email)]);
-    throw new AuthError("That email and password don't match.");
-  }
+  if (!row || !ok) throw await failed();
   await clearAuthAttempts(emailKey(email));
+  // Upgrade hashes made with older scrypt parameters now that we know the password.
+  if (needsRehash(row.password_hash)) await q("update users set password_hash = $2 where id = $1", [row.id, await hashPassword(password)]);
   return { id: row.id, email: row.email };
 }
 
@@ -195,7 +234,7 @@ export async function requestPasswordReset(emailRaw: string, ip?: string): Promi
 /** Sets a new password from a reset link (single use), signs out every session and confirms the email. */
 export async function resetPassword(token: string, password: string): Promise<User> {
   if (password.length < 8) throw new AuthError("Use a password of at least 8 characters.");
-  if (password.length > 200) throw new AuthError("That password is too long.");
+  if (password.length > MAX_PASSWORD_LENGTH) throw new AuthError("That password is too long.");
   const userId = await consumeToken(token, "reset");
   if (!userId) throw new AuthError("That link is invalid or has expired. Ask for a new one.");
   const hash = await hashPassword(password);
@@ -204,7 +243,7 @@ export async function resetPassword(token: string, password: string): Promise<Us
     [userId, hash],
   );
   if (!user) throw new AuthError("That link is invalid or has expired. Ask for a new one.");
-  await q("delete from sessions where user_id = $1", [user.id]);
+  await destroyAllSessions(user.id);
   await clearAuthAttempts(emailKey(user.email));
   return user;
 }
@@ -227,6 +266,15 @@ export async function userFromSession(token: string | undefined): Promise<User |
 
 export async function destroySession(token: string | undefined): Promise<void> {
   if (token) await q("delete from sessions where token_hash = $1", [sha256(token)]);
+}
+
+/** "Log out of all devices": removes every session of this user. */
+export async function destroyAllSessions(userId: string): Promise<void> {
+  await q("delete from sessions where user_id = $1", [userId]);
+}
+
+export async function purgeExpiredSessions(): Promise<void> {
+  await q("delete from sessions where expires_at < now()");
 }
 
 export async function primaryWorkspace(userId: string): Promise<string> {
