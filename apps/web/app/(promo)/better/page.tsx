@@ -115,11 +115,12 @@ const STEPS = [
   ["03", "Watch it move", "Mark tasks done to trigger a re-check. Weekly crawls and AI answer tracking show what your fixes changed."],
 ];
 
-const ROWS = [
-  ["Tells you if ChatGPT & co. recommend you", false, true],
-  ["Plain-English fixes, ranked for you", false, true],
-  ["Re-checks your fix automatically", false, true],
-  ["Keyword tables for SEO specialists", true, false],
+// What this product does, stated on its own terms. No claims about what other tools lack
+// (SB-26): several SEO suites now track AI visibility too.
+const FEATURES = [
+  ["Asks ChatGPT, Claude, Gemini and Perplexity whether they recommend you", "Your questions, every week, with the sources they cite."],
+  ["Plain-English fixes, ranked for you", "Every finding becomes a task with why it matters and a drafted fix."],
+  ["Re-checks your fix automatically", "Mark a task done and the site is crawled again to confirm it."],
 ] as const;
 
 export default function BetterSeoBuilder() {
@@ -196,46 +197,21 @@ export default function BetterSeoBuilder() {
         <section className="mx-auto max-w-7xl px-5 pb-24 sm:pb-32">
           <div className="grid gap-12 lg:grid-cols-[1fr_1.2fr] lg:items-center">
             <h2 className="display text-6xl sm:text-8xl">
-              Old SEO tools were built for <span className="text-[var(--lime)]">one</span> search engine.
+              Built for search engines <span className="text-[var(--lime)]">and</span> AI assistants.
             </h2>
-            <div className="overflow-hidden rounded-3xl border border-[var(--line)]">
-              <table className="w-full text-left text-sm sm:text-base">
-                <thead>
-                  <tr className="bg-[var(--surface)]">
-                    <th className="p-4 font-semibold text-[var(--muted)] sm:p-5" scope="col">
-                      <span className="sr-only">Feature</span>
-                    </th>
-                    <th className="p-4 text-center font-semibold text-[var(--muted)] sm:p-5" scope="col">
-                      Typical SEO suite
-                    </th>
-                    <th className="p-4 text-center font-extrabold text-[var(--lime)] sm:p-5" scope="col">
-                      Better SEO Builder
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {ROWS.map(([label, them, us]) => (
-                    <tr key={label} className="border-t border-[var(--line)]">
-                      <th className="p-4 font-semibold sm:p-5" scope="row">
-                        {label}
-                      </th>
-                      <td className="p-4 text-center sm:p-5">{them ? <span aria-label="Yes">✓</span> : <span className="text-[#5d635a]" aria-label="No">—</span>}</td>
-                      <td className="p-4 text-center sm:p-5">
-                        {us ? (
-                          <span className="font-extrabold text-[var(--lime)]" aria-label="Yes">
-                            ✓
-                          </span>
-                        ) : (
-                          <span className="text-[#5d635a]" aria-label="No">
-                            —
-                          </span>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <ul className="overflow-hidden rounded-3xl border border-[var(--line)]">
+              {FEATURES.map(([title, detail], i) => (
+                <li key={title} className={`flex gap-4 bg-[var(--surface)] p-5 sm:p-6 ${i ? "border-t border-[var(--line)]" : ""}`}>
+                  <span className="font-extrabold text-[var(--lime)]" aria-hidden>
+                    ✓
+                  </span>
+                  <span>
+                    <span className="block font-semibold sm:text-lg">{title}</span>
+                    <span className="mt-1 block text-[var(--muted)]">{detail}</span>
+                  </span>
+                </li>
+              ))}
+            </ul>
           </div>
         </section>
 
@@ -263,6 +239,20 @@ export default function BetterSeoBuilder() {
             .
           </p>
           <p>Scores and impact are estimates, not guarantees of rankings or AI citations.</p>
+          <nav aria-label="Legal" className="flex flex-wrap gap-x-5 gap-y-2">
+            <a href={`${APP_URL}/privacy`} className="underline underline-offset-4 hover:text-[var(--ink)]">
+              Privacy
+            </a>
+            <a href={`${APP_URL}/terms`} className="underline underline-offset-4 hover:text-[var(--ink)]">
+              Terms
+            </a>
+            <a href={`${APP_URL}/cookies`} className="underline underline-offset-4 hover:text-[var(--ink)]">
+              Cookies
+            </a>
+            <button type="button" data-cookie-settings className="underline underline-offset-4 hover:text-[var(--ink)]">
+              Cookie settings
+            </button>
+          </nav>
         </div>
       </footer>
     </>

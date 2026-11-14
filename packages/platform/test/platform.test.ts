@@ -57,6 +57,116 @@ describe("auth", () => {
   });
 });
 
+describe("password hashing and sessions (SB-14)", () => {
+  it("hashes with OWASP scrypt parameters and upgrades old hashes on login", async () => {
+    expect(await P.hashPassword("x")).toMatch(/^scrypt\$N=131072,r=8,p=1\$[^$]+\$[^$]+$/);
+    const { randomBytes, scryptSync } = await import("node:crypto");
+    const salt = randomBytes(16);
+    const legacy = `scrypt$${salt.toString("base64")}$${scryptSync("grace's old password", salt, 64).toString("base64")}`;
+    const grace = await P.signUp("grace@example.com", "placeholder password");
+    await P.q("update users set password_hash = $2 where id = $1", [grace.id, legacy]);
+    expect(await P.verifyPassword("grace's old password", legacy)).toBe(true);
+    expect(P.needsRehash(legacy)).toBe(true);
+    expect((await P.logIn("grace@example.com", "grace's old password")).id).toBe(grace.id);
+    const [row] = await P.q<{ password_hash: string }>("select password_hash from users where id = $1", [grace.id]);
+    expect(row!.password_hash).toMatch(/^scrypt\$N=131072/);
+    expect(P.needsRehash(row!.password_hash)).toBe(false);
+    expect((await P.logIn("grace@example.com", "grace's old password")).id).toBe(grace.id);
+  });
+
+  it("refuses over-long passwords at login without hashing them", async () => {
+    await expect(P.logIn("alice@example.com", "x".repeat(201))).rejects.toThrow(/don't match/);
+    await P.q("delete from auth_attempts where key = $1", [P.emailKey("alice@example.com")]);
+  });
+
+  it("logs out of every device and purges expired sessions", async () => {
+    const a = await P.createSession(alice.id);
+    const b = await P.createSession(alice.id);
+    const other = await P.createSession(bob.id);
+    await P.destroyAllSessions(alice.id);
+    expect(await P.userFromSession(a)).toBeNull();
+    expect(await P.userFromSession(b)).toBeNull();
+    expect(await P.q("select 1 from sessions where user_id = $1", [alice.id])).toHaveLength(0);
+    expect((await P.userFromSession(other))?.id).toBe(bob.id);
+    await P.q("update sessions set expires_at = now() - interval '1 day' where user_id = $1", [bob.id]);
+    await P.purgeExpiredSessions();
+    expect(await P.q("select 1 from sessions where user_id = $1", [bob.id])).toHaveLength(0);
+  });
+});
+
+describe("login throttling (SB-05)", () => {
+  it("locks an email after 10 failed logins, even for the right password", async () => {
+    await P.signUp("dave@example.com", "dave's long password");
+    for (let i = 0; i < 10; i++) await expect(P.logIn("dave@example.com", `wrong ${i}`, "198.51.100.7")).rejects.toThrow(/don't match/);
+    await expect(P.logIn("dave@example.com", "wrong again", "198.51.100.7")).rejects.toThrow(/Too many attempts/);
+    await expect(P.logIn("dave@example.com", "dave's long password", "198.51.100.8")).rejects.toThrow(/Too many attempts/);
+    await P.q("delete from auth_attempts where key = $1", [P.emailKey("dave@example.com")]);
+    expect((await P.logIn("Dave@example.com", "dave's long password")).email).toBe("dave@example.com");
+  });
+
+  it("limits attempts per IP across emails and clears the email count on success", async () => {
+    const ip = "203.0.113.77";
+    for (let i = 0; i < P.MAX_AUTH_ATTEMPTS_PER_IP; i++) await expect(P.logIn(`nobody${i}@example.com`, "whatever123", ip)).rejects.toThrow(/don't match/);
+    await expect(P.logIn("alice@example.com", "correct horse battery", ip)).rejects.toThrow(/Too many attempts/);
+    await expect(P.signUp("newcomer@example.com", "a long enough password", ip)).rejects.toThrow(/Too many attempts/);
+    await P.q("delete from auth_attempts where key = $1", [P.ipKey(ip)]);
+
+    await expect(P.logIn("alice@example.com", "wrong password", "192.0.2.1")).rejects.toThrow(/don't match/);
+    await P.logIn("alice@example.com", "correct horse battery", "192.0.2.1");
+    const left = await P.q("select 1 from auth_attempts where key = $1", [P.emailKey("alice@example.com")]);
+    expect(left).toHaveLength(0);
+  });
+});
+
+describe("email verification and password reset (SB-06)", () => {
+  const sent: { to: string; subject: string; text: string }[] = [];
+  const tokenIn = (text: string, path: string) => new RegExp(`/${path}\\?token=([A-Za-z0-9_-]+)`).exec(text)?.[1] ?? "";
+  beforeAll(() => P.setMailer(async (m) => void sent.push(m)));
+  afterAll(() => P.setMailer(undefined));
+
+  it("answers new and existing emails the same way", async () => {
+    expect(P.emailVerificationRequired()).toBe(true);
+    expect(await P.startSignUp("erin@example.com", "erin's long password")).toEqual({ user: null });
+    expect(await P.startSignUp("Alice@example.com", "some other password")).toEqual({ user: null });
+    expect(sent.map((m) => m.to)).toEqual(["erin@example.com", "alice@example.com"]);
+    expect(tokenIn(sent[0]!.text, "verify")).not.toBe("");
+    expect(sent[1]!.text).not.toMatch(/token=/);
+    await expect(P.startSignUp("frank@example.com", "short")).rejects.toThrow(/at least 8/);
+  });
+
+  it("blocks site creation until the email is confirmed, and links work once", async () => {
+    const erin = (await P.q<{ id: string }>("select id from users where email = 'erin@example.com'"))[0]!;
+    await expect(P.createSite(erin.id, { url: "erin.example" })).rejects.toThrow(/Confirm your email/);
+    const token = tokenIn(sent[0]!.text, "verify");
+    expect((await P.verifyEmail(token)).id).toBe(erin.id);
+    await expect(P.verifyEmail(token)).rejects.toThrow(/invalid or has expired/);
+    await P.requireVerifiedEmail(erin.id);
+  });
+
+  it("resets a password once, signs out other sessions and keeps unknown emails silent", async () => {
+    const erin = (await P.q<{ id: string }>("select id from users where email = 'erin@example.com'"))[0]!;
+    const session = await P.createSession(erin.id);
+    sent.length = 0;
+    await P.requestPasswordReset("nobody-here@example.com");
+    expect(sent).toHaveLength(0);
+    await P.requestPasswordReset("ERIN@example.com");
+    const token = tokenIn(sent[0]!.text, "reset");
+    await expect(P.resetPassword(token, "short")).rejects.toThrow(/at least 8/);
+    await P.resetPassword(token, "a brand new password");
+    await expect(P.resetPassword(token, "another new password")).rejects.toThrow(/invalid or has expired/);
+    expect(await P.userFromSession(session)).toBeNull();
+    expect((await P.logIn("erin@example.com", "a brand new password")).id).toBe(erin.id);
+    await expect(P.logIn("erin@example.com", "erin's long password")).rejects.toThrow(/don't match/);
+  });
+
+  it("expires links after 60 minutes", async () => {
+    sent.length = 0;
+    await P.requestPasswordReset("erin@example.com");
+    await P.q("update auth_tokens set expires_at = now() - interval '1 minute' where purpose = 'reset'");
+    await expect(P.resetPassword(tokenIn(sent[0]!.text, "reset"), "yet another password")).rejects.toThrow(/invalid or has expired/);
+  });
+});
+
 describe("sites", () => {
   it("creates a site with seeded prompts and a queued crawl", async () => {
     siteId = await P.createSite(alice.id, {
@@ -79,6 +189,12 @@ describe("sites", () => {
     await expect(P.listTasks(bob.id, siteId)).rejects.toThrow(/not found/i);
     expect(await P.listSites(bob.id)).toHaveLength(0);
     expect(await P.listSites(alice.id)).toHaveLength(1);
+  });
+
+  it("answers non-UUID prompt and competitor ids with a friendly error, not a 500 (SB-24)", async () => {
+    await expect(P.setPromptActive(alice.id, siteId, "not-a-uuid", false)).rejects.toMatchObject({ code: "prompt_invalid" });
+    await expect(P.deletePrompt(alice.id, siteId, "1; drop table prompts")).rejects.toMatchObject({ code: "prompt_invalid" });
+    await expect(P.removeCompetitor(alice.id, siteId, "x")).rejects.toMatchObject({ code: "competitor_invalid" });
   });
 
   it("parses competitor lines", () => {
@@ -166,15 +282,162 @@ describe("AI visibility runs", () => {
   });
 });
 
+/** Runs fn with some environment variables set, then restores them. */
+async function withEnv<T>(vars: Record<string, string>, fn: () => Promise<T>): Promise<T> {
+  const before = Object.fromEntries(Object.keys(vars).map((k) => [k, process.env[k]]));
+  Object.assign(process.env, vars);
+  try {
+    return await fn();
+  } finally {
+    for (const [k, v] of Object.entries(before)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  }
+}
+
+describe("fair-use limits (SB-02)", () => {
+  let carol: { id: string; email: string };
+  const carolSites: string[] = [];
+
+  beforeAll(async () => {
+    carol = await P.signUp("carol@example.com", "carol's long password");
+  });
+  afterAll(async () => {
+    await P.q("delete from jobs where payload->>'siteId' = any($1)", [carolSites]);
+    await P.q("delete from sites where id = any($1)", [carolSites]);
+  });
+
+  it("refuses a 4th site in one workspace", async () => {
+    for (const d of ["one.example", "two.example", "three.example"]) carolSites.push(await P.createSite(carol.id, { url: d }));
+    await expect(P.createSite(carol.id, { url: "four.example" })).rejects.toThrow(/up to 3 sites/);
+    expect(await P.listSites(carol.id)).toHaveLength(3);
+  });
+
+  it("returns the existing run inside the cooldown instead of queueing another", async () => {
+    await withEnv({ PERPLEXITY_API_KEY: "test-key" }, async () => {
+      const first = await P.requestPromptRun(carol.id, carolSites[0]!);
+      expect(first).toBeTruthy();
+      expect(await P.requestPromptRun(carol.id, carolSites[0]!)).toBe(first); // still running
+      await P.q("update prompt_runs set status = 'done', finished_at = now() where id = $1", [first]);
+      expect(await P.requestPromptRun(carol.id, carolSites[0]!)).toBe(first); // done, but within 24 hours
+      const runs = await P.q("select 1 from prompt_runs where site_id = $1", [carolSites[0]]);
+      expect(runs).toHaveLength(1);
+    });
+  });
+
+  it("caps prompt runs per workspace and across the service", async () => {
+    await withEnv({ PERPLEXITY_API_KEY: "test-key", PROMPT_RUN_COOLDOWN_HOURS: "0", MAX_PROMPT_RUNS_PER_WORKSPACE_PER_DAY: "1" }, async () => {
+      await expect(P.requestPromptRun(carol.id, carolSites[1]!)).rejects.toThrow(/AI tracking runs for today/);
+    });
+    await withEnv({ PERPLEXITY_API_KEY: "test-key", PROMPT_RUN_COOLDOWN_HOURS: "0", MAX_PROMPT_RUNS_PER_DAY: "1" }, async () => {
+      await expect(P.requestPromptRun(carol.id, carolSites[1]!)).rejects.toThrow(/daily limit/);
+    });
+    const runs = await P.q("select 1 from prompt_runs where site_id = $1", [carolSites[1]]);
+    expect(runs).toHaveLength(0);
+  });
+
+  it("schedules weekly crawls only for verified sites (SB-10)", async () => {
+    const queuedCrawls = async (id: string) => (await P.q("select 1 from jobs where kind = 'site_crawl' and status = 'queued' and payload->>'siteId' = $1", [id])).length;
+    const id = carolSites[1]!;
+    await P.q("delete from jobs where payload->>'siteId' = $1", [id]); // the first crawl from createSite
+    await P.q("update sites set next_crawl_at = now() - interval '1 minute' where id = $1", [id]);
+    await P.scheduleDue();
+    expect(await queuedCrawls(id)).toBe(0);
+    await P.q("update sites set verified_at = now() where id = $1", [id]);
+    await P.scheduleDue();
+    expect(await queuedCrawls(id)).toBe(1);
+  });
+
+  it("schedules weekly AI runs only for verified sites", async () => {
+    const queuedRuns = async (id: string) => (await P.q("select 1 from jobs where kind = 'prompt_run' and status = 'queued' and payload->>'siteId' = $1 and payload->>'promptRunId' is null", [id])).length;
+    await withEnv({ PERPLEXITY_API_KEY: "test-key" }, async () => {
+      await P.scheduleDue();
+      expect(await queuedRuns(carolSites[2]!)).toBe(0);
+      await P.q("update sites set verified_at = now() where id = $1", [carolSites[2]]);
+      await P.scheduleDue();
+      expect(await queuedRuns(carolSites[2]!)).toBe(1);
+      await P.scheduleDue();
+      expect(await queuedRuns(carolSites[2]!)).toBe(1); // next_prompt_run_at moved a week out
+    });
+  });
+});
+
+describe("account export and deletion (SB-20)", () => {
+  it("exports the account's sites, prompts and answers, then deletes every row", async () => {
+    const henry = await P.signUp("henry@example.com", "henry's long password");
+    const site = await P.createSite(henry.id, { url: "henry.example", businessType: "bakery", locations: "Tacoma", competitors: "Rival Bakery | rival-bakery.example" });
+    const run = await P.one<{ id: string }>("insert into prompt_runs (site_id, engines) values ($1, '{perplexity}') returning id", [site]);
+    const prompt = await P.one<{ id: string; text: string }>("select id, text from prompts where site_id = $1 limit 1", [site]);
+    await P.q("insert into ai_runs (prompt_run_id, prompt_id, prompt_text, engine, model, answer_text) values ($1, $2, $3, 'perplexity', 'fake', 'Henry Bakery is great')", [run!.id, prompt!.id, prompt!.text]);
+    await P.createSession(henry.id);
+
+    const data = await P.exportAccountData(henry.id);
+    expect((data.account as { email: string }).email).toBe("henry@example.com");
+    expect(data.sites).toHaveLength(1);
+    expect((data.prompts as unknown[]).length).toBeGreaterThan(0);
+    expect(data.aiAnswers).toEqual([expect.objectContaining({ answer_text: "Henry Bakery is great" })]);
+    expect(data.competitors).toEqual([expect.objectContaining({ domain: "rival-bakery.example" })]);
+    expect(JSON.stringify(data)).not.toMatch(/password|token_hash/);
+
+    await P.deleteAccount(henry.id);
+    for (const [table, col] of [["users", "id"], ["sessions", "user_id"], ["workspace_members", "user_id"], ["auth_tokens", "user_id"]] as const) {
+      expect(await P.q(`select 1 from ${table} where ${col} = $1`, [henry.id]), table).toHaveLength(0);
+    }
+    expect(await P.q("select 1 from sites where id = $1", [site])).toHaveLength(0);
+    expect(await P.q("select 1 from prompts where site_id = $1", [site])).toHaveLength(0);
+    expect(await P.q("select 1 from ai_runs where prompt_run_id = $1", [run!.id])).toHaveLength(0);
+    expect(await P.q("select 1 from jobs where payload->>'siteId' = $1", [site])).toHaveLength(0);
+    expect(await P.listSites(alice.id)).toHaveLength(1); // nobody else is touched
+  });
+});
+
 describe("public audits", () => {
   it("rate-limits per requester and reuses fresh reports", async () => {
     const ids = new Set<string>();
-    for (let i = 0; i < P.PUBLIC_AUDITS_PER_HOUR; i++) ids.add(await P.requestPublicAudit(`${origin}/?v=${i}`, "203.0.113.9"));
+    for (let i = 0; i < P.PUBLIC_AUDITS_PER_HOUR; i++) {
+      const id = await P.requestPublicAudit(`${origin}/?v=${i}`, "203.0.113.9");
+      ids.add(id);
+      await P.q("update jobs set status = 'done' where id = $1", [id]); // finished, so the per-requester queue cap doesn't apply
+    }
     expect(ids.size).toBe(P.PUBLIC_AUDITS_PER_HOUR);
     await expect(P.requestPublicAudit(`${origin}/?v=99`, "203.0.113.9")).rejects.toThrow(/last hour/);
     const again = await P.requestPublicAudit(`${origin}/?v=0`, "198.51.100.1");
     expect(ids.has(again)).toBe(true);
     await expect(P.requestPublicAudit("not a url", "198.51.100.1")).rejects.toThrow(/website address/);
+  });
+
+  it("caps how many audits one requester can have queued at once", async () => {
+    const ip = "198.51.100.200";
+    for (let i = 0; i < P.MAX_QUEUED_PUBLIC_AUDITS_PER_REQUESTER; i++) await P.requestPublicAudit(`${origin}/?q=${i}`, ip);
+    await expect(P.requestPublicAudit(`${origin}/?q=99`, ip)).rejects.toThrow(/already have free audits running/);
+    await P.requestPublicAudit(`${origin}/?q=99`, "198.51.100.201"); // someone else is unaffected
+    await P.q("delete from jobs where kind = 'public_audit' and payload->>'url' like '%?q=%'");
+  });
+
+  it("forgets IP hashes after 7 days and deletes reports after 90 (SB-17)", async () => {
+    const old = await P.requestPublicAudit(`${origin}/?retention=1`, "198.51.100.99");
+    const older = await P.requestPublicAudit(`${origin}/?retention=2`, "198.51.100.98");
+    const fresh = await P.requestPublicAudit(`${origin}/?retention=3`, "198.51.100.97");
+    await P.q("update jobs set created_at = now() - interval '8 days', status = 'done' where id = $1", [old]);
+    await P.q("update jobs set created_at = now() - interval '91 days', status = 'done' where id = $1", [older]);
+    await P.scheduleDue();
+    const rows = await P.q<{ id: string; requester_hash: string | null }>("select id, requester_hash from jobs where id = any($1)", [[old, older, fresh]]);
+    expect(rows.find((r) => r.id === old)?.requester_hash).toBeNull();
+    expect(rows.find((r) => r.id === older)).toBeUndefined();
+    expect(rows.find((r) => r.id === fresh)?.requester_hash).toMatch(/^[0-9a-f]{32}$/);
+    await P.q("delete from jobs where id = any($1)", [[old, fresh]]);
+  });
+
+  it("refuses to hash IPs without REQUESTER_SALT in production", async () => {
+    await withEnv({ NODE_ENV: "production", REQUESTER_SALT: "" }, async () => {
+      delete process.env.REQUESTER_SALT;
+      expect(() => P.hashRequester("203.0.113.1")).toThrow(/REQUESTER_SALT/);
+      expect(() => P.checkProductionConfig()).toThrow(/REQUESTER_SALT/);
+    });
+    await withEnv({ NODE_ENV: "production", REQUESTER_SALT: "test-salt" }, async () => {
+      expect(P.hashRequester("203.0.113.1")).toMatch(/^[0-9a-f]{32}$/);
+    });
   });
 
   it("runs end to end through the background worker", async () => {

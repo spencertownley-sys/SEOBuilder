@@ -24,6 +24,7 @@
   --coral: #ff5a36;
   --font-display: "Anton", "Impact", "Arial Narrow Bold", sans-serif;
   min-height: 100dvh;
+  overflow-x: clip; /* nothing on the landing page may widen it past the viewport */
   color: var(--ink);
   background: var(--bg);
   font-family: "Inter", ui-sans-serif, system-ui, sans-serif;

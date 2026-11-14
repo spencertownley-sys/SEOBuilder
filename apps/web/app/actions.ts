@@ -9,8 +9,10 @@ import {
   AuthError,
   createSession,
   createSite,
+  deleteAccount,
   deletePrompt,
   deleteSite,
+  destroyAllSessions,
   destroySession,
   enqueue,
   InputError,
@@ -19,37 +21,48 @@ import {
   one,
   RateLimitError,
   removeCompetitor,
+  requestPasswordReset,
   requestPromptRun,
   requestPublicAudit,
   requireSite,
+  resendVerification,
+  resetPassword,
   setPromptActive,
   setTaskStatus,
-  signUp,
+  startSignUp,
   suggestMorePrompts,
   updateSiteProfile,
+  verifyEmail,
   verifySite,
 } from "@seobuilder/platform";
 import type { TaskStatus } from "@seobuilder/core";
-import { withMessage } from "@/lib/format";
+import { isMessageCode, withMessage, type MessageCode } from "@/lib/messages";
 import { clientIp, requireUser, SESSION_COOKIE, setSessionCookie } from "@/lib/session";
 
 const str = (f: FormData, k: string) => String(f.get(k) ?? "");
 
-/** Errors users can act on become a message on the page; anything else is a real failure. */
-function userMessage(e: unknown): string | null {
-  if (e instanceof AuthError || e instanceof InputError || e instanceof RateLimitError || e instanceof NotFoundError) return e.message;
+/**
+ * Errors users can act on become a message code on the page (the page shows its own text for the
+ * code, never the error's); anything else is a real failure and is thrown (and logged by Next).
+ */
+function userMessage(e: unknown, fallback: MessageCode): MessageCode | null {
+  if (e instanceof AuthError || e instanceof InputError || e instanceof RateLimitError || e instanceof NotFoundError) {
+    if (isMessageCode(e.code)) return e.code;
+    console.warn(`[actions] no message for error code ${e.code}: ${e.message}`);
+    return fallback;
+  }
   return null;
 }
 
-async function attempt(fn: () => Promise<void>, onErrorPath: string): Promise<void> {
-  let msg: string | null = null;
+async function attempt(fn: () => Promise<void>, onErrorPath: string, fallback: MessageCode = "input_invalid"): Promise<void> {
+  let code: MessageCode | null = null;
   try {
     await fn();
   } catch (e) {
-    msg = userMessage(e);
-    if (msg === null) throw e;
+    code = userMessage(e, fallback);
+    if (code === null) throw e;
   }
-  if (msg !== null) redirect(withMessage(onErrorPath, "error", msg));
+  if (code !== null) redirect(withMessage(onErrorPath, "error", code));
 }
 
 // ---------- public audit ----------
@@ -58,7 +71,7 @@ export async function startAudit(formData: FormData): Promise<void> {
   let id = "";
   await attempt(async () => {
     id = await requestPublicAudit(str(formData, "url"), await clientIp());
-  }, "/");
+  }, "/", "audit_failed");
   redirect(`/report/${id}`);
 }
 
@@ -69,16 +82,51 @@ function safeNext(next: string): string {
 }
 
 export async function signUpAction(formData: FormData): Promise<void> {
+  let signedIn = false;
   await attempt(async () => {
-    const user = await signUp(str(formData, "email"), str(formData, "password"));
-    await setSessionCookie(await createSession(user.id));
+    const { user } = await startSignUp(str(formData, "email"), str(formData, "password"), await clientIp());
+    if (user) {
+      await setSessionCookie(await createSession(user.id));
+      signedIn = true;
+    }
   }, "/signup");
+  // With email verification on, new and existing addresses get the same answer (SB-06).
+  if (!signedIn) redirect(withMessage("/signup", "notice", "check_email"));
   redirect(safeNext(str(formData, "next")));
+}
+
+export async function verifyEmailAction(formData: FormData): Promise<void> {
+  await attempt(async () => {
+    const user = await verifyEmail(str(formData, "token"));
+    await setSessionCookie(await createSession(user.id));
+  }, "/login");
+  redirect(withMessage("/app/new", "notice", "email_confirmed"));
+}
+
+export async function resendVerificationAction(): Promise<void> {
+  const user = await requireUser();
+  await attempt(() => resendVerification(user.id), "/app");
+  redirect(withMessage("/app", "notice", "verification_sent"));
+}
+
+export async function forgotPasswordAction(formData: FormData): Promise<void> {
+  const ip = await clientIp();
+  await attempt(() => requestPasswordReset(str(formData, "email"), ip), "/forgot");
+  redirect(withMessage("/forgot", "notice", "reset_sent"));
+}
+
+export async function resetPasswordAction(formData: FormData): Promise<void> {
+  const token = str(formData, "token");
+  await attempt(async () => {
+    const user = await resetPassword(token, str(formData, "password"));
+    await setSessionCookie(await createSession(user.id));
+  }, `/reset?token=${encodeURIComponent(token)}`);
+  redirect(withMessage("/app", "notice", "password_changed"));
 }
 
 export async function logInAction(formData: FormData): Promise<void> {
   await attempt(async () => {
-    const user = await logIn(str(formData, "email"), str(formData, "password"));
+    const user = await logIn(str(formData, "email"), str(formData, "password"), await clientIp());
     await setSessionCookie(await createSession(user.id));
   }, "/login");
   redirect(safeNext(str(formData, "next")));
@@ -89,6 +137,21 @@ export async function logOutAction(): Promise<void> {
   await destroySession(jar.get(SESSION_COOKIE)?.value);
   jar.delete(SESSION_COOKIE);
   redirect("/");
+}
+
+export async function deleteAccountAction(formData: FormData): Promise<void> {
+  const user = await requireUser();
+  if (str(formData, "confirm").trim().toLowerCase() !== user.email) redirect(withMessage("/app/account", "error", "confirm_email_to_delete"));
+  await deleteAccount(user.id);
+  (await cookies()).delete(SESSION_COOKIE);
+  redirect(withMessage("/", "notice", "account_deleted"));
+}
+
+export async function logOutEverywhereAction(): Promise<void> {
+  const user = await requireUser();
+  await destroyAllSessions(user.id);
+  (await cookies()).delete(SESSION_COOKIE);
+  redirect(withMessage("/login", "notice", "logged_out_everywhere"));
 }
 
 // ---------- sites ----------
@@ -122,7 +185,7 @@ export async function setTaskStatusAction(siteId: string, returnTo: string, form
   const user = await requireUser();
   const { recheckQueued } = await setTaskStatus(user.id, siteId, str(formData, "taskId"), str(formData, "status") as TaskStatus);
   revalidatePath(`/app/sites/${siteId}`, "layout");
-  if (recheckQueued) redirect(withMessage(returnTo, "notice", "Marked done. A re-check of the site starts in about a minute; fixed tasks move to Done automatically."));
+  if (recheckQueued) redirect(withMessage(returnTo, "notice", "recheck_queued"));
 }
 
 export async function updateProfileAction(siteId: string, formData: FormData): Promise<void> {
@@ -136,29 +199,23 @@ export async function updateProfileAction(siteId: string, formData: FormData): P
     aliases: str(formData, "aliases"),
     facts: str(formData, "facts"),
   });
-  redirect(withMessage(`/app/sites/${siteId}/settings`, "notice", "Saved."));
+  redirect(withMessage(`/app/sites/${siteId}/settings`, "notice", "saved"));
 }
 
 export async function verifySiteAction(siteId: string): Promise<void> {
   const user = await requireUser();
   const r = await verifySite(user.id, siteId);
-  redirect(
-    withMessage(
-      `/app/sites/${siteId}/settings`,
-      r.verified ? "notice" : "error",
-      r.verified ? "Ownership verified." : "We couldn't find the verification tag or DNS record yet. DNS changes can take a while to appear.",
-    ),
-  );
+  redirect(withMessage(`/app/sites/${siteId}/settings`, r.verified ? "notice" : "error", r.verified ? "site_verified" : "site_not_verified"));
 }
 
 export async function deleteSiteAction(siteId: string, formData: FormData): Promise<void> {
   const user = await requireUser();
   const site = await requireSite(user.id, siteId);
   if (str(formData, "confirm").trim().toLowerCase() !== site.domain) {
-    redirect(withMessage(`/app/sites/${siteId}/settings`, "error", `Type ${site.domain} to confirm.`));
+    redirect(withMessage(`/app/sites/${siteId}/settings`, "error", "confirm_domain"));
   }
   await deleteSite(user.id, siteId);
-  redirect(withMessage("/app", "notice", `Deleted ${site.domain}.`));
+  redirect(withMessage("/app", "notice", "site_deleted"));
 }
 
 // ---------- competitors ----------
@@ -171,7 +228,7 @@ export async function addCompetitorAction(siteId: string, formData: FormData): P
 
 export async function removeCompetitorAction(siteId: string, formData: FormData): Promise<void> {
   const user = await requireUser();
-  await removeCompetitor(user.id, siteId, str(formData, "competitorId"));
+  await attempt(() => removeCompetitor(user.id, siteId, str(formData, "competitorId")), `/app/sites/${siteId}/competitors`);
   revalidatePath(`/app/sites/${siteId}/competitors`);
 }
 
@@ -185,25 +242,28 @@ export async function addPromptAction(siteId: string, formData: FormData): Promi
 
 export async function togglePromptAction(siteId: string, formData: FormData): Promise<void> {
   const user = await requireUser();
-  await setPromptActive(user.id, siteId, str(formData, "promptId"), str(formData, "active") === "1");
+  await attempt(() => setPromptActive(user.id, siteId, str(formData, "promptId"), str(formData, "active") === "1"), `/app/sites/${siteId}/ai`);
   revalidatePath(`/app/sites/${siteId}/ai`);
 }
 
 export async function deletePromptAction(siteId: string, formData: FormData): Promise<void> {
   const user = await requireUser();
-  await deletePrompt(user.id, siteId, str(formData, "promptId"));
+  await attempt(() => deletePrompt(user.id, siteId, str(formData, "promptId")), `/app/sites/${siteId}/ai`);
   revalidatePath(`/app/sites/${siteId}/ai`);
 }
 
 export async function suggestPromptsAction(siteId: string): Promise<void> {
   const user = await requireUser();
   const n = await suggestMorePrompts(user.id, siteId);
-  redirect(withMessage(`/app/sites/${siteId}/ai`, "notice", n ? `Added ${n} suggested prompts.` : "No new suggestions. Add services, locations or competitors in Settings for more."));
+  redirect(withMessage(`/app/sites/${siteId}/ai`, "notice", n ? "prompts_added" : "no_prompt_suggestions"));
 }
 
 export async function runPromptsAction(siteId: string): Promise<void> {
   const user = await requireUser();
-  const id = await requestPromptRun(user.id, siteId);
-  if (!id) redirect(withMessage(`/app/sites/${siteId}/ai`, "error", "No AI engines are connected yet. Add an API key (see below), then run again."));
+  let id: string | null = "";
+  await attempt(async () => {
+    id = await requestPromptRun(user.id, siteId);
+  }, `/app/sites/${siteId}/ai`);
+  if (!id) redirect(withMessage(`/app/sites/${siteId}/ai`, "error", "ai_not_configured"));
   revalidatePath(`/app/sites/${siteId}/ai`);
 }

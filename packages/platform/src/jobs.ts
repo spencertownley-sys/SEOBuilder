@@ -3,6 +3,9 @@
 
 import { availableEngines } from "@seobuilder/core";
 import { one, q } from "./db.js";
+import { purgeExpiredSessions } from "./auth.js";
+import { limits } from "./limits.js";
+import { purgeAuthAttempts } from "./ratelimit.js";
 
 export type JobKind = "public_audit" | "site_crawl" | "prompt_run" | "competitor_audit";
 
@@ -76,25 +79,58 @@ async function runOne(job: JobRow, handlers: Record<JobKind, Handler>): Promise<
   }
 }
 
-/** Enqueues weekly re-crawls and AI prompt runs that are due. */
+export const REQUESTER_HASH_DAYS = 7;
+export const PUBLIC_REPORT_DAYS = 90;
+
+/** Retention promised in the privacy policy: IP hashes for 7 days, free audit reports for 90. */
+export async function applyRetention(): Promise<void> {
+  await q("update jobs set requester_hash = null where requester_hash is not null and created_at < now() - make_interval(days => $1)", [REQUESTER_HASH_DAYS]);
+  await q("delete from jobs where kind = 'public_audit' and created_at < now() - make_interval(days => $1)", [PUBLIC_REPORT_DAYS]);
+}
+
+/** Enqueues weekly re-crawls and AI prompt runs that are due, and applies data retention. */
 export async function scheduleDue(): Promise<void> {
+  await purgeAuthAttempts();
+  await purgeExpiredSessions();
+  await applyRetention();
   // Bump next_crawl_at in the same statement so two schedulers can't both enqueue a site.
+  // Weekly crawls only for sites whose owner proved ownership (SB-10); others get the first crawl
+  // when they are added, and manual re-checks.
   const due = await q<{ id: string }>(
     `update sites set next_crawl_at = now() + interval '7 days'
       where next_crawl_at <= now()
+        and verified_at is not null
         and not exists (select 1 from jobs j where j.kind = 'site_crawl' and j.status in ('queued','running') and j.payload->>'siteId' = sites.id::text)
       returning id`,
   );
   for (const s of due) await enqueue("site_crawl", { siteId: s.id, reason: "scheduled" });
 
   if (availableEngines().length) {
-    const prompts = await q<{ id: string }>(
-      `update sites set next_prompt_run_at = now() + interval '7 days'
-        where (next_prompt_run_at is null or next_prompt_run_at <= now())
-          and exists (select 1 from prompts p where p.site_id = sites.id and p.active)
-        returning id`,
+    // Paid AI calls: only for sites whose owner proved they own them, and never past the
+    // service-wide daily ceiling (queued scheduled runs count against it too).
+    const started = await one<{ n: number }>(
+      `select (select count(*)::int from prompt_runs where started_at > now() - interval '24 hours')
+            + (select count(*)::int from jobs where kind = 'prompt_run' and status = 'queued' and payload->>'promptRunId' is null) as n`,
     );
-    for (const s of prompts) await enqueue("prompt_run", { siteId: s.id });
+    const room = limits.promptRunsPerDay() - (started?.n ?? 0);
+    if (room <= 0) {
+      console.warn(`[jobs] daily prompt run ceiling (${limits.promptRunsPerDay()}) reached; weekly AI runs wait until tomorrow`);
+    } else {
+      const prompts = await q<{ id: string }>(
+        `update sites set next_prompt_run_at = now() + interval '7 days'
+          where id in (
+            select id from sites
+             where (next_prompt_run_at is null or next_prompt_run_at <= now())
+               and verified_at is not null
+               and exists (select 1 from prompts p where p.site_id = sites.id and p.active)
+             order by next_prompt_run_at nulls first
+             limit $1
+             for update skip locked)
+          returning id`,
+        [room],
+      );
+      for (const s of prompts) await enqueue("prompt_run", { siteId: s.id });
+    }
   }
 }
 

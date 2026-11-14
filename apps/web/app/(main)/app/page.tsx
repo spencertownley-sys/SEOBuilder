@@ -1,16 +1,18 @@
 import Link from "next/link";
-import { listSites } from "@seobuilder/platform";
+import { emailVerificationRequired, isEmailVerified, listSites } from "@seobuilder/platform";
 import { AutoRefresh } from "@/components/auto-refresh";
 import { Messages } from "@/components/messages";
 import { scoreTone } from "@/components/report";
 import { timeAgo } from "@/lib/format";
 import { requireUser } from "@/lib/session";
+import { SubmitButton } from "@/components/submit-button";
+import { resendVerificationAction } from "@/app/actions";
 
 export const metadata = { title: "Your sites" };
 
 export default async function Dashboard({ searchParams }: { searchParams: Promise<{ notice?: string; error?: string }> }) {
   const user = await requireUser();
-  const sites = await listSites(user.id);
+  const [sites, verified] = await Promise.all([listSites(user.id), emailVerificationRequired() ? isEmailVerified(user.id) : true]);
   const { notice, error } = await searchParams;
   return (
     <div className="space-y-6">
@@ -22,6 +24,16 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
         </Link>
       </div>
       <Messages notice={notice} error={error} />
+      {!verified && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          <p>Confirm your email address ({user.email}) to add sites and run AI tracking. The link is in your inbox.</p>
+          <form action={resendVerificationAction}>
+            <SubmitButton variant="secondary" pending="Sending…">
+              Send a new link
+            </SubmitButton>
+          </form>
+        </div>
+      )}
       {sites.length === 0 ? (
         <div className="rounded-xl border border-dashed border-slate-300 bg-white p-10 text-center">
           <p className="text-lg font-medium">Add your first site</p>

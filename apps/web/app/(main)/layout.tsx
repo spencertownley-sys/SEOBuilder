@@ -1,13 +1,18 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { logOutAction } from "@/app/actions";
+import { logOutAction, logOutEverywhereAction } from "@/app/actions";
 import { currentUser } from "@/lib/session";
 
 export const metadata: Metadata = {
   title: { default: "Mentionful: be found by people and by AI", template: "%s · Mentionful" },
   description:
     "A free SEO + AI visibility audit with a ranked, plain-English fix list, plus weekly tracking of how ChatGPT, Claude, Gemini and Perplexity talk about you.",
-  openGraph: { siteName: "Mentionful", type: "website" },
+  openGraph: {
+    siteName: "Mentionful",
+    type: "website",
+    images: [{ url: "/og.png", width: 1200, height: 630, alt: "Mentionful: be found by people and by AI." }],
+  },
+  twitter: { card: "summary_large_image", images: ["/og.png"] },
 };
 
 export default async function MainLayout({ children }: { children: React.ReactNode }) {
@@ -25,10 +30,18 @@ export default async function MainLayout({ children }: { children: React.ReactNo
                 <Link href="/app" className="font-medium text-slate-700 hover:text-ink">
                   Sites
                 </Link>
-                <span className="hidden text-slate-400 sm:inline">{user.email}</span>
+                <Link href="/app/account" className="text-slate-600 hover:text-ink">
+                  Account
+                </Link>
+                <span className="hidden text-slate-400 md:inline">{user.email}</span>
                 <form action={logOutAction}>
                   <button type="submit" className="text-slate-600 hover:text-ink">
                     Log out
+                  </button>
+                </form>
+                <form action={logOutEverywhereAction} className="hidden lg:block">
+                  <button type="submit" className="text-slate-500 hover:text-ink">
+                    Log out of all devices
                   </button>
                 </form>
               </>
@@ -46,8 +59,31 @@ export default async function MainLayout({ children }: { children: React.ReactNo
         </div>
       </header>
       <main className="mx-auto max-w-5xl px-4 py-10">{children}</main>
-      <footer className="mx-auto max-w-5xl px-4 pb-10 text-xs text-slate-400">
-        Mentionful · Scores and impact are estimates, not guarantees of rankings or AI citations. Our crawler identifies as SEOBuilderBot and obeys robots.txt.
+      <footer className="mx-auto max-w-5xl space-y-3 px-4 pb-10 text-xs text-slate-600">
+        <nav aria-label="Legal" className="flex flex-wrap gap-x-4 gap-y-2">
+          <Link href="/privacy" className="underline hover:text-ink">
+            Privacy
+          </Link>
+          <Link href="/terms" className="underline hover:text-ink">
+            Terms
+          </Link>
+          <Link href="/cookies" className="underline hover:text-ink">
+            Cookies
+          </Link>
+          <Link href="/bot" className="underline hover:text-ink">
+            Our crawler
+          </Link>
+          <button type="button" data-cookie-settings className="underline hover:text-ink">
+            Cookie settings
+          </button>
+        </nav>
+        <p>
+          Mentionful · Scores and impact are estimates, not guarantees of rankings or AI citations. Our crawler identifies as{" "}
+          <Link href="/bot" className="underline hover:text-ink">
+            MentionfulBot
+          </Link>{" "}
+          (formerly SEOBuilderBot) and obeys robots.txt.
+        </p>
       </footer>
     </>
   );

@@ -1,7 +1,7 @@
 import type { PageData, SiteData } from "../types.js";
 import { extractPage, extractSitemapUrls } from "./extract.js";
-import { politeFetch, USER_AGENT, type FetchOptions } from "./fetcher.js";
-import { aiBotAccess, isAllowed, parseRobots, type Robots } from "./robots.js";
+import { LEGACY_BOT_TOKEN, politeFetch, USER_AGENT, type FetchOptions } from "./fetcher.js";
+import { aiBotAccess, crawlDelayFor, isAllowed, parseRobots, type Robots } from "./robots.js";
 
 export interface CrawlOptions {
   /** PRD: 500 pages on the base plan; the free audit uses fewer. */
@@ -16,6 +16,17 @@ export interface CrawlOptions {
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * robots.txt answered 5xx or could not be fetched. RFC 9309 says to treat that as "disallow
+ * everything", so the crawl stops before fetching any page.
+ */
+export class RobotsUnavailableError extends Error {}
+
+/** Our crawler may fetch a path only if neither its current name nor its old one is disallowed. */
+export function crawlerAllowed(robots: Robots, path: string): boolean {
+  return isAllowed(robots, USER_AGENT, path) && isAllowed(robots, LEGACY_BOT_TOKEN, path);
+}
 
 function normalize(url: string): string {
   const u = new URL(url);
@@ -51,8 +62,18 @@ export async function crawlSite(startUrl: string, opts: CrawlOptions = {}): Prom
   // robots.txt
   const robotsUrl = `${origin}/robots.txt`;
   const robotsRes = await politeFetch(robotsUrl, fetchOpts);
+  if (robotsRes.status === 0 || robotsRes.status >= 500) {
+    const why = robotsRes.status ? `HTTP ${robotsRes.status}` : (robotsRes.error ?? "no response");
+    throw new RobotsUnavailableError(`robots.txt unavailable (${why}), so the site was not crawled. Try again once ${robotsUrl} loads.`);
+  }
+  // 4xx (no robots.txt) means everything is allowed.
   const robotsFound = robotsRes.status === 200 && !/<html/i.test(robotsRes.body.slice(0, 500));
   const robots: Robots = robotsFound ? parseRobots(robotsRes.body) : { groups: [], sitemaps: [] };
+  // Honour Crawl-delay (capped at 10 s, the stricter of our name and the old one): one request at
+  // a time to this host, that many seconds apart.
+  const crawlDelay = robotsFound ? Math.max(crawlDelayFor(robots, USER_AGENT), crawlDelayFor(robots, LEGACY_BOT_TOKEN)) : 0;
+  const workers = crawlDelay > 0 ? 1 : concurrency;
+  const pageDelayMs = crawlDelay > 0 ? Math.max(delayMs, crawlDelay * 1000) : delayMs;
 
   // Sitemaps: those declared in robots.txt, else the conventional location.
   // Sites hosted under a path (e.g. GitHub Pages project sites) keep their sitemap there.
@@ -97,7 +118,7 @@ export async function crawlSite(startUrl: string, opts: CrawlOptions = {}): Prom
         continue;
       }
       const path = new URL(item.url).pathname + new URL(item.url).search;
-      if (robotsFound && !isAllowed(robots, USER_AGENT, path)) continue;
+      if (robotsFound && !crawlerAllowed(robots, path)) continue;
       inflight++;
       try {
         await crawlOne(item);
@@ -153,11 +174,11 @@ export async function crawlSite(startUrl: string, opts: CrawlOptions = {}): Prom
         }
       }
       onProgress?.(pages.length, queue.length);
-      if (delayMs) await sleep(delayMs);
+      if (pageDelayMs) await sleep(pageDelayMs);
     }
   }
 
-  await Promise.all(Array.from({ length: concurrency }, worker));
+  await Promise.all(Array.from({ length: workers }, worker));
   if (queue.length) truncated = true;
 
   // Status-check links we didn't crawl (external, or internal past the page budget).

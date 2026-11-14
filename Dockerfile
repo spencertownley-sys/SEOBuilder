@@ -13,6 +13,9 @@ RUN npm run build && npm prune --omit=dev
 FROM node:22-slim
 WORKDIR /app
 ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1
-COPY --from=build /app /app
+# Run as the unprivileged node user (uid 1000 in the official image), not root. --chown gives it
+# the files in the same layer, which is cheaper than a separate RUN chown -R.
+COPY --from=build --chown=node:node /app /app
+USER node
 EXPOSE 3000
 CMD ["npm", "run", "start", "-w", "@seobuilder/web"]
