@@ -12,6 +12,11 @@ const LANDING_URL = "https://betterseobuilder.com/";
 // Served by the landing host itself instead of redirecting to the app.
 const LANDING_LOCAL_PATHS = new Set(["/api/health", "/robots.txt", "/sitemap.xml", "/.well-known/security.txt", "/cookie-banner.js", "/cookie-banner.css"]);
 
+const WWW = new Map([
+  ["www.mentionful.com", "mentionful.com"],
+  ["www.betterseobuilder.com", "betterseobuilder.com"],
+]);
+
 function hostOf(req: NextRequest): string {
   return (req.headers.get("x-forwarded-host") ?? req.headers.get("host") ?? "").split(",")[0]!.trim().split(":")[0]!.toLowerCase();
 }
@@ -20,10 +25,10 @@ export function proxy(req: NextRequest) {
   const host = hostOf(req);
   const { pathname, search } = req.nextUrl;
 
-  // www → apex on both domains.
-  if (host.startsWith("www.") && (host.endsWith("mentionful.com") || host.endsWith("betterseobuilder.com"))) {
-    return NextResponse.redirect(`https://${host.slice(4)}${pathname}${search}`, 308);
-  }
+  // www to apex on both domains. Exact matches only: the host header is client-controlled, so a
+  // suffix check would let www.evilmentionful.com redirect to evilmentionful.com.
+  const apex = WWW.get(host);
+  if (apex) return NextResponse.redirect(`https://${apex}${pathname}${search}`, 308);
 
   const landing = process.env.SITE_MODE === "landing" || LANDING_HOSTS.has(host);
   if (!landing) {
